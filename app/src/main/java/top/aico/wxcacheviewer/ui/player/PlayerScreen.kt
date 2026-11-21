@@ -98,6 +98,10 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
     var interactionTick by remember { mutableIntStateOf(0) }
     var speed by remember { mutableFloatStateOf(1f) }
     var volume by remember { mutableFloatStateOf(settings.playbackVolume) }
+    // 静音前的音量，用于取消静音时恢复
+    var lastAudibleVolume by remember {
+        mutableFloatStateOf(if (settings.playbackVolume > VOLUME_EPSILON) settings.playbackVolume else 1f)
+    }
     var volumePanelVisible by remember { mutableStateOf(false) }
     var seekHint by remember { mutableIntStateOf(0) }
     var suppressTap by remember { mutableStateOf(false) }
@@ -200,12 +204,27 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
         val next = value.coerceIn(0f, 1f)
         videoPlayer.setVolume(next)
         volume = next
+        if (next > VOLUME_EPSILON) {
+            lastAudibleVolume = next
+        }
     }
 
     val commitVolume: () -> Unit = {
         settings.playbackVolume = volume
         interactionTick++
     }
+
+    val toggleMute: () -> Unit = {
+        if (volume > VOLUME_EPSILON) {
+            lastAudibleVolume = volume
+            changeVolume(0f)
+        } else {
+            changeVolume(lastAudibleVolume.coerceIn(0.05f, 1f))
+        }
+        commitVolume()
+    }
+
+    val muted = volume <= VOLUME_EPSILON
 
     val preparing = copying || (!ready && error == null)
 
@@ -444,9 +463,11 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
                         modifier = Modifier.size(40.dp)
                     ) {
                         Icon(
-                            painter = painterResource(id = R.drawable.ic_volume),
+                            painter = painterResource(
+                                id = if (muted) R.drawable.ic_volume_off else R.drawable.ic_volume
+                            ),
                             contentDescription = stringResource(id = R.string.player_volume),
-                            tint = if (volume <= 0.001f) {
+                            tint = if (muted) {
                                 Color.White.copy(alpha = 0.5f)
                             } else {
                                 Color.White
@@ -462,8 +483,10 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
                         ) {
                             VolumePanel(
                                 volume = volume,
+                                muted = muted,
                                 onVolumeChange = changeVolume,
-                                onVolumeCommit = commitVolume
+                                onVolumeCommit = commitVolume,
+                                onToggleMute = toggleMute
                             )
                         }
                     }
@@ -491,8 +514,10 @@ private class VolumePopupPositionProvider(private val gapPx: Int) : PopupPositio
 @Composable
 private fun VolumePanel(
     volume: Float,
+    muted: Boolean,
     onVolumeChange: (Float) -> Unit,
-    onVolumeCommit: () -> Unit
+    onVolumeCommit: () -> Unit,
+    onToggleMute: () -> Unit
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -512,13 +537,19 @@ private fun VolumePanel(
             onVolumeChange = onVolumeChange,
             onVolumeCommit = onVolumeCommit
         )
-        Spacer(modifier = Modifier.height(8.dp))
-        Icon(
-            painter = painterResource(id = R.drawable.ic_volume),
-            contentDescription = null,
-            tint = Color.White.copy(alpha = 0.8f),
-            modifier = Modifier.size(16.dp)
-        )
+        Spacer(modifier = Modifier.height(4.dp))
+        IconButton(onClick = onToggleMute, modifier = Modifier.size(32.dp)) {
+            Icon(
+                painter = painterResource(
+                    id = if (muted) R.drawable.ic_volume_off else R.drawable.ic_volume
+                ),
+                contentDescription = stringResource(
+                    id = if (muted) R.string.player_unmute else R.string.player_mute
+                ),
+                tint = Color.White.copy(alpha = if (muted) 0.55f else 0.9f),
+                modifier = Modifier.size(18.dp)
+            )
+        }
     }
 }
 
@@ -597,4 +628,5 @@ private const val POSITION_POLL_INTERVAL_MS = 200L
 private const val LONG_PRESS_DELAY_MS = 350L
 private const val SEEK_STEP_MS = 3_000L
 private const val SEEK_REPEAT_MS = 220L
+private const val VOLUME_EPSILON = 0.001f
 private val SPEED_STEPS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
