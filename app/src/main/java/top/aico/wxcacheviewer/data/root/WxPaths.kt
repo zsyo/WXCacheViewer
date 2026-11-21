@@ -4,6 +4,15 @@ object WxPaths {
     const val CACHE_ROOT = "/data/user/0/com.tencent.mm/cache"
     const val IDENTITY_ROOT = "/data/user/0/com.tencent.mm/files/identity_records"
 
+    /**
+     * 微信数据目录的两种等价写法：/data/data 与 /data/user/0 在多数设备上是同一个目录，
+     * 但个别机型对其中一种设置了额外的访问限制，因此两个都尝试。
+     */
+    val WX_BASES = listOf(
+        "/data/data/com.tencent.mm",
+        "/data/user/0/com.tencent.mm"
+    )
+
     private val accountHashRegex = Regex("^[0-9a-f]{32}$")
     private val cacheFileNameRegex = Regex("^finder_video(?:_xWT[0-9]+)?__?[0-9a-f]{32}$")
 
@@ -18,20 +27,17 @@ object WxPaths {
         return "$CACHE_ROOT/$hash/finder/video"
     }
 
-    fun discoverAccountsCommand(): String = listOf(
-        "for d in ${shellQuote(CACHE_ROOT)} ${shellQuote(IDENTITY_ROOT)}; do",
-        "  [ -d \"\$d\" ] || continue",
-        "  ls -1 \"\$d\" 2>/dev/null",
-        "done | grep -E '^[0-9a-f]{32}$' | sort -u || true"
-    ).joinToString("\n")
-
-    fun checkVideoDirsCommand(hashes: List<String>): String {
-        val valid = hashes.filter(::isValidAccountHash)
-        if (valid.isEmpty()) return "exit 0"
-        val checks = valid.joinToString("\n") { hash ->
-            "[ -d ${shellQuote("$CACHE_ROOT/$hash/finder/video")} ] && echo $hash"
-        }
-        return "$checks\ntrue"
+    /**
+     * 列出账号身份目录与视频缓存目录。使用 find 而不是 ls，避免部分机型上 ls 走 shell
+     * 别名/权限差异导致空输出；stderr 全部丢弃，输出由 AccountDiscoveryParser 解析。
+     */
+    fun discoverAccountsCommand(): String = buildString {
+        appendLine("for base in " + WX_BASES.joinToString(" ") { shellQuote(it) } + "; do")
+        appendLine("  find \"\$base/cache\" -maxdepth 3 -type d -name video 2>/dev/null")
+        appendLine("  find \"\$base/cache\" -maxdepth 1 -type d 2>/dev/null")
+        appendLine("  find \"\$base/files/identity_records\" -maxdepth 1 2>/dev/null")
+        appendLine("done")
+        append("true")
     }
 
     fun listFilesCommand(hash: String, useWcForSize: Boolean = false): String {

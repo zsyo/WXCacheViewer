@@ -47,16 +47,22 @@ fun AccountSelectScreen(
         when {
             state.rootState is RootState.Unavailable -> ErrorView(
                 message = rootErrorMessage(state.rootState.reason),
-                onRetry = onRetry
+                onRetry = onRetry,
+                details = state.diagnostics
             )
 
             state.loading -> LoadingView(text = stringResource(id = R.string.loading))
 
-            state.error != null -> ErrorView(message = state.error, onRetry = onRetry)
+            state.error != null -> ErrorView(
+                message = state.error,
+                onRetry = onRetry,
+                details = state.diagnostics
+            )
 
             state.accounts.isEmpty() -> ErrorView(
                 message = stringResource(id = R.string.no_account_found),
-                onRetry = onRetry
+                onRetry = onRetry,
+                details = state.diagnostics
             )
 
             else -> LazyColumn(

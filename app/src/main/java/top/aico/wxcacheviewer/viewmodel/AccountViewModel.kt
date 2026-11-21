@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import top.aico.wxcacheviewer.data.repository.CacheRepository
 import top.aico.wxcacheviewer.data.repository.SettingsRepository
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
+import top.aico.wxcacheviewer.data.root.RootDiagnostics
 import top.aico.wxcacheviewer.data.root.RootState
 import top.aico.wxcacheviewer.domain.model.Account
 
@@ -19,21 +20,26 @@ data class AccountUiState(
     val rootState: RootState? = null,
     val accounts: List<Account> = emptyList(),
     val remarks: Map<String, String> = emptyMap(),
-    val error: String? = null
+    val error: String? = null,
+    val diagnostics: String? = null
 )
 
 class AccountViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = SettingsRepository(application)
-    private val repository = CacheRepository(RootCommandExecutor())
+    private val executor = RootCommandExecutor()
+    private val repository = CacheRepository(executor)
     private val _uiState = MutableStateFlow(AccountUiState())
     val uiState: StateFlow<AccountUiState> = _uiState.asStateFlow()
 
     fun refresh() {
         viewModelScope.launch {
-            _uiState.update { it.copy(loading = true, error = null) }
+            _uiState.update { it.copy(loading = true, error = null, diagnostics = null) }
             val root = repository.checkRoot()
             if (root is RootState.Unavailable) {
-                _uiState.update { it.copy(loading = false, rootState = root) }
+                val diagnostics = RootDiagnostics.collect(getApplication(), executor)
+                _uiState.update {
+                    it.copy(loading = false, rootState = root, diagnostics = diagnostics)
+                }
                 return@launch
             }
             try {
@@ -42,8 +48,20 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
                 _uiState.update {
                     it.copy(loading = false, rootState = root, accounts = accounts, remarks = remarks)
                 }
+                if (accounts.isEmpty()) {
+                    val diagnostics = RootDiagnostics.collect(getApplication(), executor)
+                    _uiState.update { it.copy(diagnostics = diagnostics) }
+                }
             } catch (e: Exception) {
-                _uiState.update { it.copy(loading = false, rootState = root, error = e.message ?: "读取账号失败") }
+                val diagnostics = RootDiagnostics.collect(getApplication(), executor)
+                _uiState.update {
+                    it.copy(
+                        loading = false,
+                        rootState = root,
+                        error = e.message ?: "读取账号失败",
+                        diagnostics = diagnostics
+                    )
+                }
             }
         }
     }
