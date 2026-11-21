@@ -8,17 +8,22 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -29,7 +34,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -48,11 +52,19 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -73,6 +85,9 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
     }
     val maxVolume = remember {
         audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
+    }
+    val volumePopupPositionProvider = remember {
+        VolumePopupPositionProvider(gapPx = (6 * context.resources.displayMetrics.density).toInt())
     }
     val videoPlayer = remember(file.name) { SimpleVideoPlayer(context) }
 
@@ -134,10 +149,16 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
         isPlaying = false
     }
 
-    LaunchedEffect(controlsVisible, isPlaying, interactionTick) {
-        if (controlsVisible && isPlaying) {
+    LaunchedEffect(controlsVisible, isPlaying, interactionTick, volumePanelVisible) {
+        if (controlsVisible && isPlaying && !volumePanelVisible) {
             delay(CONTROLS_HIDE_DELAY_MS)
             controlsVisible = false
+        }
+    }
+
+    LaunchedEffect(controlsVisible) {
+        if (!controlsVisible) {
+            volumePanelVisible = false
         }
     }
 
@@ -362,100 +383,190 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
-            Column(
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color.Black.copy(alpha = 0.55f))
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                    .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)
             ) {
-                AnimatedVisibility(visible = volumePanelVisible) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 4.dp)
+                Text(
+                    text = formatDuration(positionMs),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Slider(
+                    value = positionMs.toFloat()
+                        .coerceIn(0f, durationMs.coerceAtLeast(1L).toFloat()),
+                    onValueChange = {
+                        dragging = true
+                        positionMs = it.toLong()
+                        interactionTick++
+                    },
+                    onValueChangeFinished = {
+                        videoPlayer.seekTo(positionMs.toInt())
+                        dragging = false
+                        keepControlsVisible()
+                    },
+                    valueRange = 0f..durationMs.coerceAtLeast(1L).toFloat(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color.White,
+                        activeTrackColor = Color.White,
+                        inactiveTrackColor = Color.White.copy(alpha = 0.3f)
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 8.dp)
+                )
+                Text(
+                    text = formatDuration(durationMs),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Text(
+                    text = formatSpeed(speed),
+                    color = Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = cycleSpeed
+                        )
+                        .padding(horizontal = 8.dp, vertical = 8.dp)
+                )
+                Box {
+                    IconButton(
+                        onClick = {
+                            if (!volumePanelVisible) {
+                                volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+                            }
+                            volumePanelVisible = !volumePanelVisible
+                            interactionTick++
+                        },
+                        modifier = Modifier.size(40.dp)
                     ) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_volume),
                             contentDescription = stringResource(id = R.string.player_volume),
-                            tint = Color.White,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Slider(
-                            value = volume.toFloat().coerceIn(0f, maxVolume.toFloat()),
-                            onValueChange = changeVolume,
-                            valueRange = 0f..maxVolume.toFloat(),
-                            colors = SliderDefaults.colors(
-                                thumbColor = Color.White,
-                                activeTrackColor = Color.White,
-                                inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                            ),
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(start = 12.dp)
+                            tint = if (volume == 0) {
+                                Color.White.copy(alpha = 0.5f)
+                            } else {
+                                Color.White
+                            },
+                            modifier = Modifier.size(22.dp)
                         )
                     }
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = formatDuration(positionMs),
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                    Slider(
-                        value = positionMs.toFloat()
-                            .coerceIn(0f, durationMs.coerceAtLeast(1L).toFloat()),
-                        onValueChange = {
-                            dragging = true
-                            positionMs = it.toLong()
-                            interactionTick++
-                        },
-                        onValueChangeFinished = {
-                            videoPlayer.seekTo(positionMs.toInt())
-                            dragging = false
-                            keepControlsVisible()
-                        },
-                        valueRange = 0f..durationMs.coerceAtLeast(1L).toFloat(),
-                        colors = SliderDefaults.colors(
-                            thumbColor = Color.White,
-                            activeTrackColor = Color.White,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                        ),
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 12.dp)
-                    )
-                    Text(
-                        text = formatDuration(durationMs),
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    TextButton(onClick = cycleSpeed) {
-                        Text(
-                            text = formatSpeed(speed),
-                            color = Color.White,
-                            style = MaterialTheme.typography.labelLarge
-                        )
-                    }
-                    Box(modifier = Modifier.weight(1f))
-                    IconButton(onClick = {
-                        volumePanelVisible = !volumePanelVisible
-                        interactionTick++
-                    }) {
-                        Icon(
-                            painter = painterResource(id = R.drawable.ic_volume),
-                            contentDescription = stringResource(id = R.string.player_volume),
-                            tint = Color.White
-                        )
+                    if (volumePanelVisible) {
+                        Popup(
+                            popupPositionProvider = volumePopupPositionProvider,
+                            onDismissRequest = { volumePanelVisible = false },
+                            properties = PopupProperties(focusable = false)
+                        ) {
+                            VolumePanel(
+                                volume = volume,
+                                maxVolume = maxVolume,
+                                onVolumeChange = changeVolume
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+/** 音量面板锚定在音量按钮上方，水平方向居中对齐按钮。 */
+private class VolumePopupPositionProvider(private val gapPx: Int) : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize
+    ): IntOffset {
+        val x = (anchorBounds.left + anchorBounds.width / 2 - popupContentSize.width / 2)
+            .coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0))
+        val y = (anchorBounds.top - popupContentSize.height - gapPx).coerceAtLeast(0)
+        return IntOffset(x, y)
+    }
+}
+
+@Composable
+private fun VolumePanel(volume: Int, maxVolume: Int, onVolumeChange: (Float) -> Unit) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.Black.copy(alpha = 0.85f))
+            .padding(horizontal = 10.dp, vertical = 12.dp)
+    ) {
+        Text(
+            text = "${volume * 100 / maxVolume}%",
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        VerticalVolumeSlider(volume = volume, maxVolume = maxVolume, onVolumeChange = onVolumeChange)
+        Spacer(modifier = Modifier.height(8.dp))
+        Icon(
+            painter = painterResource(id = R.drawable.ic_volume),
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.8f),
+            modifier = Modifier.size(16.dp)
+        )
+    }
+}
+
+/** 垂直音量条：自绘轨道与滑块，避免旋转水平 Slider 带来的触摸区域与裁剪问题。 */
+@Composable
+private fun VerticalVolumeSlider(volume: Int, maxVolume: Int, onVolumeChange: (Float) -> Unit) {
+    val progress = (volume.toFloat() / maxVolume.toFloat()).coerceIn(0f, 1f)
+    val trackHeight = 132.dp
+    val thumbSize = 14.dp
+    val trackHeightPx = with(LocalDensity.current) { trackHeight.toPx() }
+
+    fun valueAt(y: Float): Float =
+        ((1f - y / trackHeightPx) * maxVolume).coerceIn(0f, maxVolume.toFloat())
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .width(40.dp)
+            .height(trackHeight)
+            .pointerInput(trackHeightPx, maxVolume) {
+                detectTapGestures { offset -> onVolumeChange(valueAt(offset.y)) }
+            }
+            .pointerInput(trackHeightPx, maxVolume) {
+                detectDragGestures { change, _ ->
+                    change.consume()
+                    onVolumeChange(valueAt(change.position.y))
+                }
+            }
+    ) {
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .fillMaxHeight()
+                .clip(CircleShape)
+                .background(Color.White.copy(alpha = 0.3f))
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .width(4.dp)
+                .fillMaxHeight(progress)
+                .clip(CircleShape)
+                .background(Color.White)
+        )
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .offset(y = -((trackHeight - thumbSize) * progress))
+                .size(thumbSize)
+                .clip(CircleShape)
+                .background(Color.White)
+        )
     }
 }
 
