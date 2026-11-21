@@ -40,6 +40,11 @@
     <string name="export_failed">导出失败：%1$s</string>
     <string name="export_one_success">已保存 %1$s</string>
     <string name="file_open_failed">无法打开「%1$s」，系统中没有可处理该类型的应用</string>
+    <string name="voice_play">播放语音</string>
+    <string name="voice_pause">暂停语音</string>
+    <string name="voice_label">语音</string>
+    <string name="voice_play_failed">语音播放失败：%1$s</string>
+    <string name="voice_decode_failed">解码失败</string>
     <string name="load_more">加载更多</string>
     <string name="loading_more">正在加载…</string>
     <string name="delete_failed">删除失败：%1$s</string>

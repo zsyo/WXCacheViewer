@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import top.aico.wxcacheviewer.R
+import top.aico.wxcacheviewer.data.audio.VoicePreparer
 import top.aico.wxcacheviewer.data.repository.CacheRepository
 import top.aico.wxcacheviewer.data.repository.GridMode
 import top.aico.wxcacheviewer.data.repository.PageCursor
@@ -71,6 +72,8 @@ data class GalleryUiState(
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = SettingsRepository(application)
     private val repository = CacheRepository(RootCommandExecutor())
+    /** 语音要先解码再导出，导出逻辑与其它缓存源不同。 */
+    private val voicePreparer by lazy { VoicePreparer(application, RootCommandExecutor()) }
     private val _uiState = MutableStateFlow(
         GalleryUiState(
             gridMode = settings.gridMode,
@@ -267,8 +270,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 try {
                     val target = exportTarget(file)
                     dirLabels += target.label
-                    paths += repository.exportFile(file, target.directory).absolutePath
-                    mimes += file.type.mime
+                    val exported = exportSingle(file, target.directory)
+                    paths += exported.absolutePath
+                    mimes += mimeOf(file, exported)
                 } catch (e: Exception) {
                     failed++
                     lastError = e.message
@@ -312,11 +316,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 val target = exportTarget(file)
-                val exported = repository.exportFile(file, target.directory)
+                val exported = exportSingle(file, target.directory)
                 MediaScannerConnection.scanFile(
                     app,
                     arrayOf(exported.absolutePath),
-                    arrayOf(file.type.mime),
+                    arrayOf(mimeOf(file, exported)),
                     null
                 )
                 onResult(true, app.getString(R.string.export_one_success, exported.name))
@@ -397,6 +401,21 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     private data class ExportTarget(val directory: File, val label: String)
 
+    /** 语音要先转码再落盘，其余缓存源直接 root 复制。 */
+    private suspend fun exportSingle(file: CacheFile, directory: File): File =
+        if (SourceRegistry.byId(file.sourceId).exportKind == ExportKind.MUSIC) {
+            voicePreparer.export(file, directory)
+        } else {
+            repository.exportFile(file, directory)
+        }
+
+    /** 语音导出成 mp3（真 AMR 则原样导出），MIME 要跟着实际扩展名走。 */
+    private fun mimeOf(file: CacheFile, exported: File): String = when {
+        SourceRegistry.byId(file.sourceId).exportKind != ExportKind.MUSIC -> file.type.mime
+        exported.extension.equals("amr", ignoreCase = true) -> "audio/amr"
+        else -> "audio/mpeg"
+    }
+
     @Suppress("DEPRECATION")
     private fun exportTarget(file: CacheFile): ExportTarget {
         val source = SourceRegistry.byId(file.sourceId)
@@ -404,6 +423,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             ExportKind.MOVIES -> Environment.DIRECTORY_MOVIES to "Movies"
             ExportKind.PICTURES -> Environment.DIRECTORY_PICTURES to "Pictures"
             ExportKind.DOWNLOADS -> Environment.DIRECTORY_DOWNLOADS to "Download"
+            ExportKind.MUSIC -> Environment.DIRECTORY_MUSIC to "Music"
         }
         val directory = File(
             Environment.getExternalStoragePublicDirectory(publicDir),

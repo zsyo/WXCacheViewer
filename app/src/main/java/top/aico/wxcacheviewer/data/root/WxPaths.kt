@@ -340,6 +340,17 @@ object WxPaths {
     }
 
     /**
+     * 把应用私有目录里的文件（例如解码后的语音）由 root 复制到公共目录。
+     * 应用自身在 Android 10+ 写不了公共目录，只能借 root 落盘。
+     */
+    fun exportLocalFileCommand(sourcePath: String, destination: String): String {
+        val src = shellQuote(sourcePath)
+        val dest = shellQuote(destination)
+        val destDir = shellQuote(destination.substringBeforeLast('/'))
+        return "mkdir -p $destDir && cp -f $src $dest && chmod 0644 $dest && echo OK"
+    }
+
+    /**
      * 把账号目录下的 FinderAccounts_01.db 复制到应用私有目录（目录由应用预先创建）。
      *
      * WAL 文件里可能还有未合并的写入，缺了它容易读到空表，因此 -wal、-shm 一起复制；

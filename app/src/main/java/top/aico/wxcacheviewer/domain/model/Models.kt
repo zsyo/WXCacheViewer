@@ -6,6 +6,12 @@ enum class FileType {
     /** 聊天文件（attachment）里收发的文档与安装包等。 */
     ZIP, PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, APK, AUDIO,
 
+    /** 微信语音：`voice2` 下的 `.amr` 实际是 SILK v3，需要先解码成 PCM 才能播放。 */
+    SILK,
+
+    /** 真正的 AMR 语音，可直接播放。 */
+    AMR,
+
     UNKNOWN
 }
 
@@ -31,6 +37,8 @@ val FileType.mime: String
         FileType.TXT -> "text/plain"
         FileType.APK -> "application/vnd.android.package-archive"
         FileType.AUDIO -> "audio/mpeg"
+        FileType.SILK -> "audio/silk"
+        FileType.AMR -> "audio/amr"
         FileType.UNKNOWN -> "application/octet-stream"
     }
 
@@ -53,6 +61,8 @@ val FileType.extension: String
         FileType.TXT -> "txt"
         FileType.APK -> "apk"
         FileType.AUDIO -> "mp3"
+        FileType.SILK -> "silk"
+        FileType.AMR -> "amr"
         FileType.UNKNOWN -> "bin"
     }
 
@@ -60,6 +70,10 @@ val FileType.extension: String
 val FileType.isImage: Boolean
     get() = this == FileType.JPEG || this == FileType.PNG ||
         this == FileType.GIF || this == FileType.WEBP
+
+/** 语音类缓存，列表里走内联播放而不是预览或「打开方式」。 */
+val FileType.isVoice: Boolean
+    get() = this == FileType.SILK || this == FileType.AMR
 
 data class Account(
     val hash: String,

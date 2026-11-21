@@ -15,6 +15,10 @@ class FileTypeDetectorTest {
         Case("89504e470d0a1a0a0000000d49484452", FileType.PNG),
         Case("47494638396101000100800000000000ffffff21f9", FileType.GIF),
         Case("5249464612345678574542505650382010000000", FileType.WEBP),
+        // 微信语音：0x02 + "#!SILK_V3"
+        Case("02232153494c4b5f56330c00a72b74f7a8ee49", FileType.SILK),
+        Case("232153494c4b5f56330c00a72b74f7a8ee49", FileType.SILK),
+        Case("2321414d520a3c333132353266", FileType.AMR),
         Case("00000000", FileType.UNKNOWN),
         Case("ff", FileType.UNKNOWN),
         Case("", FileType.UNKNOWN)

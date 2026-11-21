@@ -7,6 +7,7 @@ import top.aico.wxcacheviewer.data.root.AccountDiscoveryParser
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
 import top.aico.wxcacheviewer.data.root.RootState
 import top.aico.wxcacheviewer.data.root.WxPaths
+import top.aico.wxcacheviewer.domain.ExportNaming
 import top.aico.wxcacheviewer.domain.FileTypeDetector
 import top.aico.wxcacheviewer.domain.model.Account
 import top.aico.wxcacheviewer.domain.model.CacheFile
@@ -15,10 +16,6 @@ import top.aico.wxcacheviewer.domain.model.extension
 import top.aico.wxcacheviewer.domain.source.CacheSource
 import top.aico.wxcacheviewer.domain.source.SourceRegistry
 import java.io.File
-import java.security.MessageDigest
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /** 一次列表的结果；递归源文件过多时会截断，[truncated] 用于界面提示。 */
 data class SourceListing(
@@ -314,7 +311,10 @@ class CacheRepository(private val executor: RootCommandExecutor) {
     suspend fun exportFile(file: CacheFile, destinationDir: File): File = withContext(Dispatchers.IO) {
         val source = SourceRegistry.byId(file.sourceId)
         // 聊天文件保留原名，重名时加序号，不能直接覆盖用户之前导出的同名文件
-        val destination = uniqueDestination(destinationDir, exportFileName(file))
+        val destination = ExportNaming.uniqueDestination(
+            destinationDir,
+            ExportNaming.nameFor(file, file.type.extension)
+        )
         val result = executor.run(
             WxPaths.exportSourceFileCommand(
                 file.accountHash,
@@ -328,43 +328,6 @@ class CacheRepository(private val executor: RootCommandExecutor) {
         }
         destination
     }
-
-    /** 目标目录已有同名文件时依次尝试 `名字(1).ext`、`名字(2).ext`。 */
-    private fun uniqueDestination(directory: File, name: String): File {
-        val first = File(directory, name)
-        if (!first.exists()) return first
-        val dot = name.lastIndexOf('.')
-        val base = if (dot > 0) name.substring(0, dot) else name
-        val suffix = if (dot > 0) name.substring(dot) else ""
-        var index = 1
-        while (true) {
-            val candidate = File(directory, "$base($index)$suffix")
-            if (!candidate.exists()) return candidate
-            index++
-        }
-    }
-
-    /**
-     * 导出名尽量可读：`<源前缀>_年月日_时分秒_<相对路径哈希 8 位>.<扩展名>`。
-     * 末段用相对路径哈希，保证不同子目录下的同名文件不会互相覆盖。
-     * 聊天文件本身就有可读文件名，直接沿用（见 [CacheSource.preserveFileName]）。
-     */
-    private fun exportFileName(file: CacheFile): String {
-        val source = SourceRegistry.byId(file.sourceId)
-        if (source.preserveFileName) {
-            val cleaned = file.name.replace('/', '_').replace('\\', '_').trim()
-            if (cleaned.isNotEmpty() && cleaned != "." && cleaned != "..") return cleaned
-        }
-        val timeMillis = if (file.modifiedAt > 0L) file.modifiedAt * 1000 else System.currentTimeMillis()
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(timeMillis))
-        return "${source.exportTag}_${stamp}_${shortDigest(file.relativePath)}.${file.type.extension}"
-    }
-
-    private fun shortDigest(value: String): String =
-        MessageDigest.getInstance("SHA-1")
-            .digest(value.toByteArray())
-            .joinToString("") { "%02x".format(it) }
-            .take(8)
 
     private companion object {
         const val OK_MARK = "OK"

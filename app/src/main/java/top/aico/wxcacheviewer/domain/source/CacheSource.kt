@@ -8,9 +8,9 @@ enum class SourceRoot(val dirName: String) {
     MICROMSG("MicroMsg")
 }
 
-/** 导出目标：视频进 Movies，图片进 Pictures，文档等进 Download。 */
+/** 导出目标：视频进 Movies，图片进 Pictures，文档进 Download，语音进 Music。 */
 enum class ExportKind {
-    MOVIES, PICTURES, DOWNLOADS
+    MOVIES, PICTURES, DOWNLOADS, MUSIC
 }
 
 /** 扁平源列表失败后改用 `wc -c` 重试时使用的默认超时。 */

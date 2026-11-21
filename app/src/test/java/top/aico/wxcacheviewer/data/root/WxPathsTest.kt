@@ -184,6 +184,30 @@ class WxPathsTest {
     }
 
     @Test
+    fun voicePageScansAmrFilesTwoLevelsDeep() {
+        val subDirs = WxPaths.listSourceSubDirsCommand(hash, SourceRegistry.VOICE)
+        assertTrue(subDirs.contains("D='${WxPaths.MICROMSG_ROOT}/$hash/voice2'"))
+
+        val page = WxPaths.listSourceDirPageCommand(hash, SourceRegistry.VOICE, "0a")
+        assertTrue(page.contains("P='${WxPaths.MICROMSG_ROOT}/$hash/voice2/0a'"))
+        // voice2 是「两位 hex / 两位 hex / 文件」，从一级子目录往里还差两层
+        assertTrue(page.contains("find \"\$P\" -maxdepth 2 -type f"))
+        assertTrue(page.contains("-name '*.amr'"))
+        assertFalse(page.contains("-printf"))
+    }
+
+    @Test
+    fun exportLocalFileCommandCopiesToPublicDirectory() {
+        val command = WxPaths.exportLocalFileCommand(
+            "/data/user/0/top.aico/files/voice/a.mp3",
+            "/storage/emulated/0/Music/WXCacheViewer/a.mp3"
+        )
+        assertTrue(command.contains("mkdir -p '/storage/emulated/0/Music/WXCacheViewer'"))
+        assertTrue(command.contains("cp -f '/data/user/0/top.aico/files/voice/a.mp3'"))
+        assertTrue(command.endsWith("echo OK"))
+    }
+
+    @Test
     fun pagedCommandsRejectUnsafeDir() {
         try {
             WxPaths.listSourceDirPageCommand(hash, SourceRegistry.CHAT_IMAGE, "../evil")

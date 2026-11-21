@@ -8,6 +8,7 @@ enum class SourceTab(val id: String, val title: String) {
     CHAT_VIDEO("chat_video", "聊天视频"),
     EMOJI("emoji", "表情"),
     IMAGES("images", "图片"),
+    VOICE("voice", "语音"),
     FILES("files", "文件");
 
     val sources: List<CacheSource>
@@ -16,16 +17,17 @@ enum class SourceTab(val id: String, val title: String) {
             CHAT_VIDEO -> listOf(SourceRegistry.CHAT_VIDEO)
             EMOJI -> listOf(SourceRegistry.EMOJI)
             IMAGES -> listOf(SourceRegistry.CHAT_IMAGE, SourceRegistry.SNS)
+            VOICE -> listOf(SourceRegistry.VOICE)
             FILES -> listOf(SourceRegistry.CHAT_FILE)
         }
 
-    /** 该标签页内是否允许删除；只读源（聊天图片、朋友圈、聊天文件）不显示删除入口。 */
+    /** 该标签页内是否允许删除；只读源（聊天图片、朋友圈、语音、聊天文件）不显示删除入口。 */
     val allowsDelete: Boolean
         get() = sources.all { it.allowDelete }
 
-    /** 文档类内容用单列列表展示，缩略图网格看文件名太小。 */
+    /** 文档与语音用单列列表展示：缩略图网格放不下文件名，语音还需要播放按钮。 */
     val listOnly: Boolean
-        get() = this == FILES
+        get() = this == FILES || this == VOICE
 
     companion object {
         fun fromId(id: String?): SourceTab = entries.firstOrNull { it.id == id } ?: FINDER

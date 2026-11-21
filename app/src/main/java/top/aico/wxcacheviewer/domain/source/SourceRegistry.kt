@@ -17,6 +17,9 @@ object SourceRegistry {
     /** 聊天文件名：中文、空格、括号都合法，只排除路径分隔符与控制字符。 */
     private val CHAT_FILE_NAME = Regex("^[^/\\\\\\u0000-\\u001F]{1,192}$")
 
+    /** 语音：`voice2/<两位 hex>/<两位 hex>/msg_amr_<hex>.amr`，个别版本只有一级子目录。 */
+    private val VOICE_PATH = Regex("^(?:[0-9a-f]{2}/){1,2}msg_amr_[0-9a-f]{8,40}\\.amr$")
+
     /** 视频号视频：文件名无扩展名，靠文件头判断类型。 */
     val FINDER_VIDEO = CacheSource(
         id = "finder_video",
@@ -101,6 +104,29 @@ object SourceRegistry {
     )
 
     /**
+     * 语音：`MicroMsg/<hash>/voice2` 下按两级十六进制目录散列，文件后缀 `.amr` 但内容是
+     * SILK v3（见 `VoiceFormat`），需要先解码成 PCM 才能播放，因此导出统一转成 mp3。
+     *
+     * 目录结构与 `image2` 同量级，同样按一级子目录分页扫描；语音属于聊天记录的一部分，
+     * 不提供删除。
+     */
+    val VOICE = CacheSource(
+        id = "voice",
+        title = "语音",
+        root = SourceRoot.MICROMSG,
+        relativeDir = "voice2",
+        relativePathRegex = VOICE_PATH,
+        exportTag = "wxvoice",
+        exportKind = ExportKind.MUSIC,
+        recursive = true,
+        maxDepth = 3,
+        findNames = listOf("*.amr"),
+        typeHint = { FileType.SILK },
+        allowDelete = false,
+        listTimeoutMs = RECURSIVE_LIST_TIMEOUT_MS
+    )
+
+    /**
      * 聊天文件：聊天里收发的文档、压缩包、安装包等，落在 `MicroMsg/<hash>/attachment`。
      * 文件名保留原始扩展名，因此按扩展名推断类型；这类文件是聊天记录的一部分，不提供删除。
      */
@@ -120,7 +146,7 @@ object SourceRegistry {
     )
 
     val all: List<CacheSource> =
-        listOf(FINDER_VIDEO, CHAT_VIDEO, EMOJI, CHAT_IMAGE, SNS, CHAT_FILE)
+        listOf(FINDER_VIDEO, CHAT_VIDEO, EMOJI, CHAT_IMAGE, SNS, VOICE, CHAT_FILE)
 
     fun byId(id: String): CacheSource = all.firstOrNull { it.id == id } ?: FINDER_VIDEO
 

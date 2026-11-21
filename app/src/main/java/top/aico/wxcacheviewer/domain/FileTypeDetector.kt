@@ -19,6 +19,13 @@ object FileTypeDetector {
     fun detect(bytes: ByteArray): FileType {
         fun at(index: Int): Int = bytes[index].toInt() and 0xFF
 
+        // 语音优先：微信的 .amr 前面可能多一个 0x02，普通播放器会认错
+        when (VoiceFormat.kindOf(bytes)) {
+            VoiceFormat.Kind.SILK, VoiceFormat.Kind.WEIXIN_SILK -> return FileType.SILK
+            VoiceFormat.Kind.AMR -> return FileType.AMR
+            VoiceFormat.Kind.UNKNOWN -> Unit
+        }
+
         if (bytes.size >= 12) {
             if (at(4) == 0x66 && at(5) == 0x74 && at(6) == 0x79 && at(7) == 0x70) {
                 return FileType.MP4

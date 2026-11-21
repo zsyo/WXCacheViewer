@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -38,6 +39,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -51,8 +53,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -71,9 +75,12 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import top.aico.wxcacheviewer.R
+import top.aico.wxcacheviewer.data.audio.VoicePlayer
+import top.aico.wxcacheviewer.data.audio.VoicePreparer
 import top.aico.wxcacheviewer.data.image.CoilImageLoaders
 import top.aico.wxcacheviewer.data.media.MediaPreparer
 import top.aico.wxcacheviewer.data.repository.GridMode
@@ -91,6 +98,7 @@ import top.aico.wxcacheviewer.domain.source.SourceTab
 import top.aico.wxcacheviewer.ui.account.AccountSwitchDialog
 import top.aico.wxcacheviewer.ui.common.ErrorView
 import top.aico.wxcacheviewer.ui.common.LoadingView
+import top.aico.wxcacheviewer.ui.common.formatDuration
 import top.aico.wxcacheviewer.ui.common.formatFileSize
 import top.aico.wxcacheviewer.ui.common.formatModifiedAt
 import top.aico.wxcacheviewer.ui.common.openFileWith
@@ -104,6 +112,9 @@ import java.io.File
 
 /** 倒数第几项进入可视区域就开始取下一页，留一点提前量避免等到底。 */
 private const val LOAD_MORE_THRESHOLD = 6
+
+/** 语音播放进度刷新间隔；语音很短，200ms 足够跟手又不至于频繁重组。 */
+private const val VOICE_PROGRESS_INTERVAL_MS = 200L
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -149,6 +160,43 @@ fun GalleryScreen(
     var openingKey by remember { mutableStateOf<String?>(null) }
     val openScope = rememberCoroutineScope()
 
+    // 语音页内联播放：当前播放项、解码中的项、进度与总时长
+    val voicePreparer = remember { VoicePreparer(context, RootCommandExecutor()) }
+    val voicePlayer = remember { VoicePlayer(context) }
+    var voiceKey by remember { mutableStateOf<String?>(null) }
+    var voicePreparingKey by remember { mutableStateOf<String?>(null) }
+    var voicePlaying by remember { mutableStateOf(false) }
+    var voicePositionMs by remember { mutableLongStateOf(0L) }
+    var voiceDurationMs by remember { mutableLongStateOf(0L) }
+    val voiceScope = rememberCoroutineScope()
+
+    DisposableEffect(voicePlayer) {
+        voicePlayer.onCompletion = {
+            voicePlaying = false
+            voicePositionMs = voiceDurationMs
+        }
+        voicePlayer.onError = { voicePlaying = false }
+        onDispose { voicePlayer.release() }
+    }
+
+    // 切标签或换账号时停掉正在播的语音，避免在别的页面继续出声
+    LaunchedEffect(state.tab.id, accountHash) {
+        voicePlayer.stop()
+        voiceKey = null
+        voicePreparingKey = null
+        voicePlaying = false
+        voicePositionMs = 0L
+        voiceDurationMs = 0L
+    }
+
+    LaunchedEffect(voicePlaying, voiceKey) {
+        while (voicePlaying) {
+            voicePositionMs = voicePlayer.positionMs()
+            if (voiceDurationMs <= 0L) voiceDurationMs = voicePlayer.durationMs()
+            delay(VOICE_PROGRESS_INTERVAL_MS)
+        }
+    }
+
     val gridState = rememberLazyGridState()
     LaunchedEffect(state.resetScrollToken) {
         if (state.files.isNotEmpty()) {
@@ -192,6 +240,49 @@ fun GalleryScreen(
                     snackbarHostState.showSnackbar(
                         context.getString(R.string.file_open_failed, file.name)
                     )
+                }
+            }
+        }
+    }
+
+    /**
+     * 语音点击：同一项在播放与暂停之间切换；换一项则先落地并解码再播。
+     * 解码是原生调用，期间在该行显示进度圈，并挡住并发点击。
+     */
+    val toggleVoice: (CacheFile) -> Unit = { file ->
+        when {
+            voiceKey == file.key && voicePlaying -> {
+                voicePlayer.pause()
+                voicePlaying = false
+            }
+
+            voiceKey == file.key -> {
+                voicePlayer.play()
+                voicePlaying = true
+            }
+
+            voicePreparingKey == null -> {
+                voicePreparingKey = file.key
+                voiceScope.launch {
+                    try {
+                        val prepared = voicePreparer.prepare(file)
+                        // 解码期间可能已经切走页面，别在别的标签页突然出声
+                        if (voicePreparingKey != file.key) return@launch
+                        voicePlayer.setSource(prepared.absolutePath)
+                        voiceKey = file.key
+                        voicePositionMs = 0L
+                        voiceDurationMs = 0L
+                        voicePlaying = true
+                    } catch (e: Exception) {
+                        snackbarHostState.showSnackbar(
+                            context.getString(
+                                R.string.voice_play_failed,
+                                e.message ?: context.getString(R.string.voice_decode_failed)
+                            )
+                        )
+                    } finally {
+                        voicePreparingKey = null
+                    }
                 }
             }
         }
@@ -312,7 +403,25 @@ fun GalleryScreen(
                                     onStartSelection(file)
                                 }
                             }
-                            if (state.tab.listOnly) {
+                            if (state.tab == SourceTab.VOICE) {
+                                VoiceListTile(
+                                    file = file,
+                                    selectionMode = state.selectionMode,
+                                    selected = selected,
+                                    preparing = voicePreparingKey == file.key,
+                                    playing = voiceKey == file.key && voicePlaying,
+                                    positionMs = if (voiceKey == file.key) voicePositionMs else 0L,
+                                    durationMs = if (voiceKey == file.key) voiceDurationMs else 0L,
+                                    onClick = {
+                                        if (state.selectionMode) {
+                                            onToggleSelection(file)
+                                        } else {
+                                            toggleVoice(file)
+                                        }
+                                    },
+                                    onLongClick = longClick
+                                )
+                            } else if (state.tab.listOnly) {
                                 FileListTile(
                                     file = file,
                                     selectionMode = state.selectionMode,
@@ -889,12 +998,113 @@ private fun FileListTile(
     }
 }
 
+/**
+ * 语音行：左侧播放/暂停按钮，右侧时间与体积，播放中在底部显示一条进度线。
+ *
+ * 微信语音的文件名是 `msg_amr_<hex>.amr`，对人没有意义，所以标题用时间，名称只作为兜底。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun VoiceListTile(
+    file: CacheFile,
+    selectionMode: Boolean,
+    selected: Boolean,
+    preparing: Boolean,
+    playing: Boolean,
+    positionMs: Long,
+    durationMs: Long,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(12.dp)
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (selected) {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape)
+                } else {
+                    Modifier
+                }
+            ),
+        shape = shape,
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (preparing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            painter = painterResource(
+                                id = if (playing) R.drawable.ic_pause else R.drawable.ic_play
+                            ),
+                            contentDescription = stringResource(
+                                id = if (playing) R.string.player_pause else R.string.voice_play
+                            ),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = formatModifiedAt(file.modifiedAt).ifBlank { file.name },
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = buildString {
+                            append(stringResource(id = R.string.voice_label))
+                            append(" / ")
+                            append(formatFileSize(file.size))
+                            if (durationMs > 0L) {
+                                append(" / ")
+                                append(formatDuration(durationMs))
+                            }
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (selectionMode) {
+                    SelectionBadge(selected = selected)
+                }
+            }
+            if (durationMs > 0L) {
+                LinearProgressIndicator(
+                    progress = {
+                        (positionMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp)
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun SelectionBadge(
     selected: Boolean,
     modifier: Modifier = Modifier
-) {
-    val primary = MaterialTheme.colorScheme.primary
+) {    val primary = MaterialTheme.colorScheme.primary
     Box(
         modifier = modifier
             .size(22.dp)

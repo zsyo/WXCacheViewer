@@ -90,6 +90,41 @@ class SourceRegistryTest {
     }
 
     @Test
+    fun voiceAcceptsHashedAmrUnderHexDirs() {
+        val voice = SourceRegistry.VOICE
+        assertTrue(
+            SourceRegistry.isValidRelativePath(
+                voice,
+                "03/fa/msg_amr_00000000000000000000000001.amr"
+            )
+        )
+        // 个别版本只有一级子目录
+        assertTrue(
+            SourceRegistry.isValidRelativePath(voice, "03/msg_amr_00000000000000000000000001.amr")
+        )
+        // 目录必须是两位十六进制
+        assertFalse(SourceRegistry.isValidRelativePath(voice, "zz/fa/msg_amr_0000.amr"))
+        assertFalse(SourceRegistry.isValidRelativePath(voice, "msg_amr_0000.amr"))
+        // 语音只收 .amr，且名字必须带 msg_amr_ 前缀
+        assertFalse(SourceRegistry.isValidRelativePath(voice, "03/fa/msg_amr_0000.mp3"))
+        assertFalse(SourceRegistry.isValidRelativePath(voice, "03/fa/other.amr"))
+        assertFalse(SourceRegistry.isValidRelativePath(voice, "03/fa/../../evil.amr"))
+    }
+
+    @Test
+    fun voiceTabSitsBeforeFilesAndIsReadOnly() {
+        assertFalse(SourceRegistry.VOICE.allowDelete)
+        assertFalse(SourceTab.VOICE.allowsDelete)
+        assertTrue(SourceTab.VOICE.listOnly)
+        assertEquals(listOf(SourceRegistry.VOICE), SourceTab.VOICE.sources)
+        // 语音排在「文件」前面
+        assertTrue(
+            SourceTab.entries.indexOf(SourceTab.VOICE) <
+                SourceTab.entries.indexOf(SourceTab.FILES)
+        )
+    }
+
+    @Test
     fun tabsCoverEverySource() {
         val covered = SourceTab.entries.flatMap { it.sources }.map { it.id }.toSet()
         assertEquals(SourceRegistry.all.map { it.id }.toSet(), covered)

@@ -7,6 +7,9 @@ android {
     namespace = "top.aico.wxcacheviewer"
     compileSdk = 35
 
+    // SILK 解码器随源码编译，NDK r28 起默认按 16KB 页对齐
+    ndkVersion = libs.versions.ndk.get()
+
     defaultConfig {
         applicationId = "top.aico.wxcacheviewer"
         minSdk = 24
@@ -41,6 +44,13 @@ android {
     }
     composeOptions {
         kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
+    }
+    externalNativeBuild {
+        cmake {
+            // SILK 解码器与 LAME 的源码构建脚本
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = libs.versions.cmake.get()
+        }
     }
 }
 
