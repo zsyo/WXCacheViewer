@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -80,6 +81,8 @@ import top.aico.wxcacheviewer.ui.common.formatFileSize
 import top.aico.wxcacheviewer.ui.common.formatModifiedAt
 import top.aico.wxcacheviewer.ui.common.shortHash
 import top.aico.wxcacheviewer.ui.player.PlayerScreen
+import top.aico.wxcacheviewer.viewmodel.BatchAction
+import top.aico.wxcacheviewer.viewmodel.BatchProgress
 import top.aico.wxcacheviewer.viewmodel.GalleryUiState
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -265,6 +268,7 @@ fun GalleryScreen(
                 SelectionToolbar(
                     allSelected = state.allSelected,
                     enabled = !state.actionBusy,
+                    progress = state.batchProgress,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
@@ -333,12 +337,13 @@ fun GalleryScreen(
 
 /**
  * 多选模式下的悬浮工具条：全选/全不选、反选、导出、删除、退出。
- * 半透明圆角背景，浮在列表底部。
+ * 半透明圆角背景，浮在列表底部；批量操作执行期间原地切换为进度显示。
  */
 @Composable
 private fun SelectionToolbar(
     allSelected: Boolean,
     enabled: Boolean,
+    progress: BatchProgress?,
     modifier: Modifier = Modifier,
     onToggleSelectAll: () -> Unit,
     onInvertSelection: () -> Unit,
@@ -352,42 +357,79 @@ private fun SelectionToolbar(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.94f),
         shadowElevation = 8.dp
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            SelectionAction(
-                iconRes = if (allSelected) R.drawable.ic_deselect_all else R.drawable.ic_select_all,
-                labelRes = if (allSelected) R.string.selection_clear_all else R.string.selection_select_all,
-                enabled = enabled,
-                onClick = onToggleSelectAll
-            )
-            SelectionAction(
-                iconRes = R.drawable.ic_invert,
-                labelRes = R.string.selection_invert,
-                enabled = enabled,
-                onClick = onInvertSelection
-            )
-            SelectionAction(
-                iconRes = R.drawable.ic_export,
-                labelRes = R.string.file_action_export,
-                enabled = enabled,
-                onClick = onExport
-            )
-            SelectionAction(
-                iconRes = R.drawable.ic_delete,
-                labelRes = R.string.file_action_delete,
-                enabled = enabled,
-                tint = MaterialTheme.colorScheme.error,
-                onClick = onDelete
-            )
-            SelectionAction(
-                iconRes = R.drawable.ic_close,
-                labelRes = R.string.selection_exit,
-                enabled = enabled,
-                onClick = onExit
-            )
+        if (progress != null) {
+            BatchProgressRow(progress = progress)
+        } else {
+            Row(
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SelectionAction(
+                    iconRes = if (allSelected) R.drawable.ic_deselect_all else R.drawable.ic_select_all,
+                    labelRes = if (allSelected) R.string.selection_clear_all else R.string.selection_select_all,
+                    enabled = enabled,
+                    onClick = onToggleSelectAll
+                )
+                SelectionAction(
+                    iconRes = R.drawable.ic_invert,
+                    labelRes = R.string.selection_invert,
+                    enabled = enabled,
+                    onClick = onInvertSelection
+                )
+                SelectionAction(
+                    iconRes = R.drawable.ic_export,
+                    labelRes = R.string.file_action_export,
+                    enabled = enabled,
+                    onClick = onExport
+                )
+                SelectionAction(
+                    iconRes = R.drawable.ic_delete,
+                    labelRes = R.string.file_action_delete,
+                    enabled = enabled,
+                    tint = MaterialTheme.colorScheme.error,
+                    onClick = onDelete
+                )
+                SelectionAction(
+                    iconRes = R.drawable.ic_close,
+                    labelRes = R.string.selection_exit,
+                    enabled = enabled,
+                    onClick = onExit
+                )
+            }
         }
+    }
+}
+
+/** 批量操作进度：环形进度 + 「正在导出 12/100」，高度与按钮行接近，避免工具条跳动。 */
+@Composable
+private fun BatchProgressRow(progress: BatchProgress) {
+    val fraction = if (progress.total > 0) {
+        progress.done.toFloat() / progress.total.toFloat()
+    } else {
+        0f
+    }
+    Row(
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        CircularProgressIndicator(
+            progress = { fraction },
+            modifier = Modifier.size(22.dp),
+            strokeWidth = 2.5.dp
+        )
+        Text(
+            text = stringResource(
+                id = when (progress.action) {
+                    BatchAction.EXPORT -> R.string.batch_export_progress
+                    BatchAction.DELETE -> R.string.batch_delete_progress
+                },
+                progress.done,
+                progress.total
+            ),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

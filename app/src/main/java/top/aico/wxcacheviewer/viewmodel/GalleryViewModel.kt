@@ -20,6 +20,16 @@ import top.aico.wxcacheviewer.domain.model.CacheFile
 import top.aico.wxcacheviewer.domain.model.SortOption
 import java.io.File
 
+/** 批量操作的种类，用于界面进度提示文案。 */
+enum class BatchAction { EXPORT, DELETE }
+
+/** 批量操作进度：done 为已完成数量，total 为总数。 */
+data class BatchProgress(
+    val action: BatchAction,
+    val done: Int,
+    val total: Int
+)
+
 data class GalleryUiState(
     val loading: Boolean = true,
     val files: List<CacheFile> = emptyList(),
@@ -28,7 +38,8 @@ data class GalleryUiState(
     val refreshing: Boolean = false,
     val error: String? = null,
     val notice: String? = null,
-    val actionBusy: Boolean = false,
+    /** 正在执行的批量操作进度；为空表示空闲。 */
+    val batchProgress: BatchProgress? = null,
     /** 是否处于多选模式；全不选后仍保持该状态，只有显式退出或删除完成才结束。 */
     val selectionMode: Boolean = false,
     val selectedNames: Set<String> = emptySet(),
@@ -37,6 +48,9 @@ data class GalleryUiState(
 ) {
     val allSelected: Boolean
         get() = files.isNotEmpty() && selectedNames.size == files.size
+
+    val actionBusy: Boolean
+        get() = batchProgress != null
 }
 
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
@@ -158,7 +172,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         if (targets.isEmpty()) return
         val app = getApplication<Application>()
         viewModelScope.launch {
-            _uiState.update { it.copy(actionBusy = true) }
+            _uiState.update {
+                it.copy(batchProgress = BatchProgress(BatchAction.EXPORT, 0, targets.size))
+            }
             val destinationDir = File(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
                 EXPORT_DIR_NAME
@@ -166,6 +182,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             val exportedPaths = ArrayList<String>(targets.size)
             var failed = 0
             var lastError: String? = null
+            var done = 0
             targets.forEach { file ->
                 try {
                     exportedPaths += repository.exportFile(file, destinationDir).absolutePath
@@ -173,6 +190,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     failed++
                     lastError = e.message
                 }
+                done++
+                publishProgress(BatchAction.EXPORT, done, targets.size)
             }
             if (exportedPaths.isNotEmpty()) {
                 MediaScannerConnection.scanFile(
@@ -184,7 +203,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             }
             _uiState.update {
                 it.copy(
-                    actionBusy = false,
+                    batchProgress = null,
                     notice = when {
                         exportedPaths.isEmpty() ->
                             app.getString(R.string.export_failed, lastError.orEmpty())
@@ -212,10 +231,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         if (targets.isEmpty()) return
         val app = getApplication<Application>()
         viewModelScope.launch {
-            _uiState.update { it.copy(actionBusy = true) }
+            _uiState.update {
+                it.copy(batchProgress = BatchProgress(BatchAction.DELETE, 0, targets.size))
+            }
             val deleted = HashSet<String>(targets.size)
             var failed = 0
             var lastError: String? = null
+            var done = 0
             targets.forEach { file ->
                 try {
                     repository.deleteFile(file)
@@ -224,11 +246,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     failed++
                     lastError = e.message
                 }
+                done++
+                publishProgress(BatchAction.DELETE, done, targets.size)
             }
             _uiState.update { state ->
                 val remaining = state.files.filterNot { it.name in deleted }
                 state.copy(
-                    actionBusy = false,
+                    batchProgress = null,
                     files = remaining,
                     selectionMode = failed > 0 && remaining.isNotEmpty(),
                     selectedNames = if (failed > 0) {
@@ -252,6 +276,17 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun consumeNotice() {
         _uiState.update { it.copy(notice = null) }
+    }
+
+    /** 每完成一项就刷新进度；若状态已被清理（例如界面重建）则忽略。 */
+    private fun publishProgress(action: BatchAction, done: Int, total: Int) {
+        _uiState.update { state ->
+            if (state.batchProgress?.action != action) {
+                state
+            } else {
+                state.copy(batchProgress = BatchProgress(action, done, total))
+            }
+        }
     }
 
     private fun GalleryUiState.selectedFiles(): List<CacheFile> =
