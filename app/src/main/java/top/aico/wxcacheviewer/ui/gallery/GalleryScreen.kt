@@ -67,6 +67,7 @@ import top.aico.wxcacheviewer.ui.common.LoadingView
 import top.aico.wxcacheviewer.ui.common.formatFileSize
 import top.aico.wxcacheviewer.ui.common.formatModifiedAt
 import top.aico.wxcacheviewer.ui.common.shortHash
+import top.aico.wxcacheviewer.ui.player.PlayerScreen
 import top.aico.wxcacheviewer.viewmodel.GalleryUiState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -93,6 +94,7 @@ fun GalleryScreen(
 
     var showSwitchDialog by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var playingFile by remember { mutableStateOf<CacheFile?>(null) }
 
     val gridState = rememberLazyGridState()
     LaunchedEffect(state.files) {
@@ -185,11 +187,19 @@ fun GalleryScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(items = state.files, key = { it.name }) { file ->
-                        CacheFileTile(file = file, thumbnailLoader = thumbnailLoader)
+                        CacheFileTile(
+                            file = file,
+                            thumbnailLoader = thumbnailLoader,
+                            onClick = { playingFile = file }
+                        )
                     }
                 }
             }
         }
+    }
+
+    playingFile?.let { playing ->
+        PlayerScreen(file = playing, onClose = { playingFile = null })
     }
 
     if (showSwitchDialog) {
@@ -306,7 +316,11 @@ private fun AccountTitle(
 }
 
 @Composable
-private fun CacheFileTile(file: CacheFile, thumbnailLoader: ThumbnailLoader) {
+private fun CacheFileTile(
+    file: CacheFile,
+    thumbnailLoader: ThumbnailLoader,
+    onClick: () -> Unit
+) {
     val bitmap by produceState<Bitmap?>(
         initialValue = null,
         key1 = file.accountHash,
@@ -316,7 +330,9 @@ private fun CacheFileTile(file: CacheFile, thumbnailLoader: ThumbnailLoader) {
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column {

@@ -50,4 +50,23 @@ class FormattersTest {
         assertEquals("ffdef473", shortHash("ffdef473a3a56cbf6d38456a41f52f46"))
         assertEquals("abc", shortHash("abc"))
     }
+
+    @Test
+    fun formatsDurationBelowOneHour() {
+        assertEquals("00:00", formatDuration(0))
+        assertEquals("00:09", formatDuration(9_400))
+        assertEquals("01:05", formatDuration(65_000))
+        assertEquals("59:59", formatDuration(3_599_000))
+    }
+
+    @Test
+    fun formatsDurationAboveOneHour() {
+        assertEquals("1:00:00", formatDuration(3_600_000))
+        assertEquals("1:02:05", formatDuration(3_725_000))
+    }
+
+    @Test
+    fun negativeDurationClampsToZero() {
+        assertEquals("00:00", formatDuration(-5_000))
+    }
 }
