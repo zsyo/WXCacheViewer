@@ -1,9 +1,13 @@
 package top.aico.wxcacheviewer.ui.gallery
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,14 +16,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -32,7 +41,9 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
@@ -45,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -70,7 +82,7 @@ import top.aico.wxcacheviewer.ui.common.shortHash
 import top.aico.wxcacheviewer.ui.player.PlayerScreen
 import top.aico.wxcacheviewer.viewmodel.GalleryUiState
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun GalleryScreen(
     state: GalleryUiState,
@@ -84,6 +96,14 @@ fun GalleryScreen(
     onSwitchAccount: (String) -> Unit,
     onSaveRemark: (String, String) -> Unit,
     onRefresh: () -> Unit,
+    onStartSelection: (CacheFile) -> Unit,
+    onToggleSelection: (CacheFile) -> Unit,
+    onToggleSelectAll: () -> Unit,
+    onInvertSelection: () -> Unit,
+    onExitSelection: () -> Unit,
+    onExportSelected: () -> Unit,
+    onDeleteSelected: () -> Unit,
+    onNoticeShown: () -> Unit,
     onRetry: () -> Unit
 ) {
     val context = LocalContext.current
@@ -94,14 +114,17 @@ fun GalleryScreen(
 
     var showSwitchDialog by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     var playingFile by remember { mutableStateOf<CacheFile?>(null) }
 
     val gridState = rememberLazyGridState()
-    LaunchedEffect(state.files) {
+    LaunchedEffect(state.resetScrollToken) {
         if (state.files.isNotEmpty()) {
             gridState.scrollToItem(0)
         }
     }
+
+    BackHandler(enabled = state.selectionMode) { onExitSelection() }
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(state.error, state.files.isEmpty()) {
@@ -110,18 +133,35 @@ fun GalleryScreen(
             snackbarHostState.showSnackbar(message)
         }
     }
+    LaunchedEffect(state.notice) {
+        val notice = state.notice
+        if (notice != null) {
+            snackbarHostState.showSnackbar(notice)
+            onNoticeShown()
+        }
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
-                    AccountTitle(
-                        hash = accountHash,
-                        remark = remark,
-                        canSwitch = canSwitchAccount,
-                        onClick = { showSwitchDialog = true }
-                    )
+                    if (state.selectionMode) {
+                        Text(
+                            text = stringResource(
+                                id = R.string.selection_count,
+                                state.selectedNames.size
+                            ),
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    } else {
+                        AccountTitle(
+                            hash = accountHash,
+                            remark = remark,
+                            canSwitch = canSwitchAccount,
+                            onClick = { showSwitchDialog = true }
+                        )
+                    }
                 },
                 actions = {
                     Box {
@@ -160,40 +200,81 @@ fun GalleryScreen(
             )
         }
     ) { padding ->
-        PullToRefreshBox(
-            isRefreshing = state.refreshing,
-            onRefresh = onRefresh,
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            when {
-                state.loading -> LoadingView(text = stringResource(id = R.string.loading_files))
+            PullToRefreshBox(
+                isRefreshing = state.refreshing,
+                onRefresh = onRefresh,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                when {
+                    state.loading -> LoadingView(text = stringResource(id = R.string.loading_files))
 
-                state.files.isEmpty() && state.error != null ->
-                    ErrorView(message = state.error, onRetry = onRetry)
+                    state.files.isEmpty() && state.error != null ->
+                        ErrorView(message = state.error, onRetry = onRetry)
 
-                state.files.isEmpty() -> ErrorView(
-                    message = stringResource(id = R.string.no_cache_files),
-                    onRetry = onRetry
-                )
+                    state.files.isEmpty() -> ErrorView(
+                        message = stringResource(id = R.string.no_cache_files),
+                        onRetry = onRetry
+                    )
 
-                else -> LazyVerticalGrid(
-                    columns = GridCells.Fixed(if (state.gridMode == GridMode.TWO) 2 else 1),
-                    state = gridState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(items = state.files, key = { it.name }) { file ->
-                        CacheFileTile(
-                            file = file,
-                            thumbnailLoader = thumbnailLoader,
-                            onClick = { playingFile = file }
-                        )
+                    else -> LazyVerticalGrid(
+                        columns = GridCells.Fixed(if (state.gridMode == GridMode.TWO) 2 else 1),
+                        state = gridState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            start = 8.dp,
+                            top = 8.dp,
+                            end = 8.dp,
+                            bottom = if (state.selectionMode) 104.dp else 8.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(items = state.files, key = { it.name }) { file ->
+                            val selected = file.name in state.selectedNames
+                            CacheFileTile(
+                                file = file,
+                                thumbnailLoader = thumbnailLoader,
+                                selectionMode = state.selectionMode,
+                                selected = selected,
+                                onClick = {
+                                    if (state.selectionMode) {
+                                        onToggleSelection(file)
+                                    } else {
+                                        playingFile = file
+                                    }
+                                },
+                                onLongClick = {
+                                    if (state.selectionMode) {
+                                        onToggleSelection(file)
+                                    } else {
+                                        onStartSelection(file)
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
+            }
+
+            if (state.selectionMode) {
+                SelectionToolbar(
+                    allSelected = state.allSelected,
+                    enabled = !state.actionBusy,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = 20.dp),
+                    onToggleSelectAll = onToggleSelectAll,
+                    onInvertSelection = onInvertSelection,
+                    onExport = onExportSelected,
+                    onDelete = { showDeleteConfirm = true },
+                    onExit = onExitSelection
+                )
             }
         }
     }
@@ -213,6 +294,116 @@ fun GalleryScreen(
             },
             onSaveRemark = onSaveRemark,
             onDismiss = { showSwitchDialog = false }
+        )
+    }
+
+    if (showDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text(text = stringResource(id = R.string.delete_selected_title)) },
+            text = {
+                Text(
+                    text = stringResource(
+                        id = R.string.delete_selected_message,
+                        state.selectedNames.size
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirm = false
+                        onDeleteSelected()
+                    }
+                ) {
+                    Text(
+                        text = stringResource(id = R.string.file_action_delete),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text(text = stringResource(id = R.string.cancel))
+                }
+            }
+        )
+    }
+}
+
+/**
+ * 多选模式下的悬浮工具条：全选/全不选、反选、导出、删除、退出。
+ * 半透明圆角背景，浮在列表底部。
+ */
+@Composable
+private fun SelectionToolbar(
+    allSelected: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onToggleSelectAll: () -> Unit,
+    onInvertSelection: () -> Unit,
+    onExport: () -> Unit,
+    onDelete: () -> Unit,
+    onExit: () -> Unit
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.94f),
+        shadowElevation = 8.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            SelectionAction(
+                iconRes = if (allSelected) R.drawable.ic_deselect_all else R.drawable.ic_select_all,
+                labelRes = if (allSelected) R.string.selection_clear_all else R.string.selection_select_all,
+                enabled = enabled,
+                onClick = onToggleSelectAll
+            )
+            SelectionAction(
+                iconRes = R.drawable.ic_invert,
+                labelRes = R.string.selection_invert,
+                enabled = enabled,
+                onClick = onInvertSelection
+            )
+            SelectionAction(
+                iconRes = R.drawable.ic_export,
+                labelRes = R.string.file_action_export,
+                enabled = enabled,
+                onClick = onExport
+            )
+            SelectionAction(
+                iconRes = R.drawable.ic_delete,
+                labelRes = R.string.file_action_delete,
+                enabled = enabled,
+                tint = MaterialTheme.colorScheme.error,
+                onClick = onDelete
+            )
+            SelectionAction(
+                iconRes = R.drawable.ic_close,
+                labelRes = R.string.selection_exit,
+                enabled = enabled,
+                onClick = onExit
+            )
+        }
+    }
+}
+
+@Composable
+private fun SelectionAction(
+    iconRes: Int,
+    labelRes: Int,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant
+) {
+    IconButton(onClick = onClick, enabled = enabled) {
+        Icon(
+            painter = painterResource(id = iconRes),
+            contentDescription = stringResource(id = labelRes),
+            tint = if (enabled) tint else tint.copy(alpha = 0.38f)
         )
     }
 }
@@ -315,11 +506,15 @@ private fun AccountTitle(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun CacheFileTile(
     file: CacheFile,
     thumbnailLoader: ThumbnailLoader,
-    onClick: () -> Unit
+    selectionMode: Boolean,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
 ) {
     val bitmap by produceState<Bitmap?>(
         initialValue = null,
@@ -329,57 +524,106 @@ private fun CacheFileTile(
         value = thumbnailLoader.load(file.accountHash, file)
     }
 
+    val shape = CardDefaults.shape
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .then(
+                if (selected) {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape)
+                } else {
+                    Modifier
+                }
+            ),
+        shape = shape,
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column {
-            val previewModifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-            if (bitmap != null) {
-                Image(
-                    bitmap = bitmap!!.asImageBitmap(),
-                    contentDescription = null,
-                    modifier = previewModifier,
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Box(
-                    modifier = previewModifier.background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center
-                ) {
+        Box(
+            modifier = Modifier.combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+        ) {
+            Column {
+                val previewModifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap!!.asImageBitmap(),
+                        contentDescription = null,
+                        modifier = previewModifier,
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Box(
+                        modifier = previewModifier.background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = file.type.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Column(modifier = Modifier.padding(8.dp)) {
                     Text(
-                        text = file.type.name,
-                        style = MaterialTheme.typography.bodyMedium,
+                        text = file.name,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    val modifiedLabel = formatModifiedAt(file.modifiedAt)
+                    Text(
+                        text = buildString {
+                            append(file.type.name)
+                            append(" / ")
+                            append(formatFileSize(file.size))
+                            if (modifiedLabel.isNotEmpty()) {
+                                append(" / ")
+                                append(modifiedLabel)
+                            }
+                        },
+                        style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
-            Column(modifier = Modifier.padding(8.dp)) {
-                Text(
-                    text = file.name,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                val modifiedLabel = formatModifiedAt(file.modifiedAt)
-                Text(
-                    text = buildString {
-                        append(file.type.name)
-                        append(" / ")
-                        append(formatFileSize(file.size))
-                        if (modifiedLabel.isNotEmpty()) {
-                            append(" / ")
-                            append(modifiedLabel)
-                        }
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+
+            if (selectionMode) {
+                SelectionBadge(
+                    selected = selected,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun SelectionBadge(
+    selected: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    Box(
+        modifier = modifier
+            .size(22.dp)
+            .clip(CircleShape)
+            .background(if (selected) primary else Color.Black.copy(alpha = 0.32f))
+            .border(1.5.dp, Color.White, CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        if (selected) {
+            Icon(
+                imageVector = Icons.Filled.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.size(14.dp)
+            )
         }
     }
 }

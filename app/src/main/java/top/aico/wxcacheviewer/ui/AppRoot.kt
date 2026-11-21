@@ -57,6 +57,14 @@ fun AppRoot(
                 onSwitchAccount = { onSelectedAccountChanged(it) },
                 onSaveRemark = accountViewModel::saveRemark,
                 onRefresh = { galleryViewModel.refresh(selectedAccountHash) },
+                onStartSelection = { galleryViewModel.startSelection(it.name) },
+                onToggleSelection = { galleryViewModel.toggleSelection(it.name) },
+                onToggleSelectAll = galleryViewModel::toggleSelectAll,
+                onInvertSelection = galleryViewModel::invertSelection,
+                onExitSelection = galleryViewModel::exitSelection,
+                onExportSelected = galleryViewModel::exportSelected,
+                onDeleteSelected = galleryViewModel::deleteSelected,
+                onNoticeShown = galleryViewModel::consumeNotice,
                 onRetry = { galleryViewModel.load(selectedAccountHash) }
             )
         }

@@ -57,10 +57,28 @@ object WxPaths {
         ).joinToString("\n")
     }
 
-    fun copyFileCommand(hash: String, name: String, destination: String): String {
+    fun cacheFilePath(hash: String, name: String): String {
         require(isValidCacheFileName(name)) { "Invalid cache file name: $name" }
-        val source = "${videoDir(hash)}/$name"
+        return "${videoDir(hash)}/$name"
+    }
+
+    fun copyFileCommand(hash: String, name: String, destination: String): String {
+        val source = shellQuote(cacheFilePath(hash, name))
         val quotedDestination = shellQuote(destination)
-        return "cp ${shellQuote(source)} $quotedDestination && chmod 0644 $quotedDestination"
+        return "cp $source $quotedDestination && chmod 0644 $quotedDestination"
+    }
+
+    /** 删除单个缓存文件。成功后输出 OK，便于与“命令失败但退出码为 0”区分。 */
+    fun deleteFileCommand(hash: String, name: String): String {
+        val path = shellQuote(cacheFilePath(hash, name))
+        return "rm -f $path && if [ -e $path ]; then echo FAILED; else echo OK; fi"
+    }
+
+    /** 把缓存文件导出到 App 以外的目录（由 root 创建目录并复制）。 */
+    fun exportFileCommand(hash: String, name: String, destination: String): String {
+        val source = shellQuote(cacheFilePath(hash, name))
+        val dest = shellQuote(destination)
+        val destDir = shellQuote(destination.substringBeforeLast('/'))
+        return "mkdir -p $destDir && cp -f $source $dest && chmod 0644 $dest && echo OK"
     }
 }
