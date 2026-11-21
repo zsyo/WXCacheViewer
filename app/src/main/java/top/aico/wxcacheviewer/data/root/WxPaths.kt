@@ -34,12 +34,17 @@ object WxPaths {
         return "$checks\ntrue"
     }
 
-    fun listFilesCommand(hash: String): String {
+    fun listFilesCommand(hash: String, useWcForSize: Boolean = false): String {
         val dir = shellQuote(videoDir(hash))
+        val sizeExpression = if (useWcForSize) {
+            "\$(wc -c < \"\$f\")"
+        } else {
+            "\$(stat -c %s \"\$f\")"
+        }
         return listOf(
             "for f in $dir/*; do",
             "  [ -f \"\$f\" ] || continue",
-            "  printf '%s\\t%s\\t' \"\$(basename \"\$f\")\" \"\$(stat -c %s \"\$f\")\"",
+            "  printf '%s\\t%s\\t' \"\$(basename \"\$f\")\" \"$sizeExpression\"",
             "  head -c 32 \"\$f\" | od -An -v -tx1 | tr -d ' \\n'",
             "  printf '\\n'",
             "done"

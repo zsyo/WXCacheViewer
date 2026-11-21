@@ -21,8 +21,8 @@ sealed interface RootState {
     enum class Reason { NO_SU, DENIED, TIMEOUT, UNKNOWN }
 }
 
-class RootCommandExecutor {
-    suspend fun run(command: String, timeoutMs: Long = DEFAULT_TIMEOUT_MS): ShellResult =
+open class RootCommandExecutor {
+    open suspend fun run(command: String, timeoutMs: Long = DEFAULT_TIMEOUT_MS): ShellResult =
         withContext(Dispatchers.IO) {
             val process = try {
                 ProcessBuilder("su", "-c", command).start()
