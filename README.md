@@ -165,6 +165,7 @@ keyPassword=你的密码
    ```
 
    `versionName` 取 tag 去掉 `v` 后的部分（`v0.1.0` → `0.1.0`），`versionCode` 取 GitHub 的 run number，保证每次发版都递增。`KEYSTORE_B64` 在构建时解码到 runner 的临时目录，不会进入仓库或产物。
+   建议用 annotated tag（`git tag -a v0.1.0 -m "版本说明"`）写发布说明：tag 的 message 会作为 Release 正文上半，下面再叠加 GitHub 按提交自动生成的变更列表；轻量 tag 没有 message 时只有自动生成部分。tag 版本号含 `-` 预发布段（如 `v0.2.0-beta.1`）时 Release 会标记为预发布。
 
 5. **取产物**。每个 tag 的 APK 在两个地方：Actions 运行页 Artifacts（保留 14 天）和该 tag 对应的 GitHub Release 附件（长期保留）。`apksigner verify` 与 `zipalign -c -P 16` 在上传前已校验通过。
 

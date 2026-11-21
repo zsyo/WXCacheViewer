@@ -20,14 +20,23 @@
 `.github/workflows/release.yml`：
 
 - 触发：`push` 的 `v*` tag，以及 `workflow_dispatch` 手动验证；`permissions: contents: write`；同 tag 不取消在跑的任务。
-- 步骤顺序：checkout → setup-java 17 → setup-android（单行空格分隔安装 `platform-tools platforms;android-35 build-tools;35.0.0 ndk;28.2.13676358 cmake;3.22.1`）→ setup-gradle → 删除仓库 `gradle.properties` 里指向开发机 Windows JDK 的 `org.gradle.java.home`（Linux runner 上不存在该路径会让 Gradle 直接报错）→ 算版本号 → 解码 keystore → 构建 → 校验签名与页对齐 → 改产物名 → 上传 artifact → 发布 Release。
+- 步骤顺序：checkout → setup-java 17 → setup-android（单行空格分隔安装 `platform-tools platforms;android-35 build-tools;35.0.0 ndk;28.2.13676358 cmake;3.22.1`）→ setup-gradle → 删除仓库 `gradle.properties` 里指向开发机 Windows JDK 的 `org.gradle.java.home`（Linux runner 上不存在该路径会让 Gradle 直接报错）→ 算版本号 → 读取 tag message → 解码 keystore → 构建 → 校验签名与页对齐 → 改产物名 → 上传 artifact → 发布 Release。
 - `setup-android` 的 `packages` 参数按空格切分，写成多行会把换行符带进包名导致安装失败，所以必须是单行。
 - 发布步骤只在 tag 触发时执行；手动触发时版本号用 `dev-<短 sha>`，不会污染 Release。
 - 校验：`apksigner verify --print-certs` 确认签名，`zipalign -c -P 16 4` 确认原生库仍是 16 KB 页对齐（见 `2611212150_16kb-page-align.md`）。
 
+## Release 正文与预发布
+
+借鉴 `G:\code\rust\NetOwl\.github\workflows\release.yml`（`OmniKit` 的 CI 只有 check + wasm，没有发布逻辑，不具参考价值）：
+
+- annotated tag（`git tag -a -m "..."`）的 message 作为 Release 正文上半，其下叠加 `generate_release_notes: true` 按提交自动生成的变更列表（含 Full Changelog）；轻量 tag 没有 message 时只有自动生成部分。
+- 读取方式：`git fetch --depth=1 origin "+refs/tags/${tag}:refs/tags/${tag}"` 浅拉 tag 对象，用 `git cat-file -t` 判断是不是 annotated tag（轻量 tag 的 `%(contents)` 会退化成提交说明，不能当发布说明），message 写到 `release-notes.md` 文件，通过 `body_path` 传给 action——比塞进 `GITHUB_OUTPUT` 多行变量更稳妥，不会遇到 here-doc 分隔符冲突。
+- 版本号含 `-` 预发布段（如 `v0.2.0-beta.1`）时 Release 标记 `prerelease: true`。
+- 本次创建了带 message 的 annotated tag `v0.1.0`，由用户手动推送。
+
 ## Action 版本
 
-参考 `G:\code\rust\OmniKit\.github\workflows\ci.yml` 的结构（checkout + 工具链 + 缓存 + 测试，测试作为发布前置），但统一改用当前最新版主版本：checkout@v7、setup-java@v6、setup-android@v4、setup-gradle@v6、upload-artifact@v7、softprops/action-gh-release@v3。已通过 GitHub API 确认这些 tag 都存在。
+早期参考过 `G:\code\rust\OmniKit\.github\workflows\ci.yml` 的「测试作为发布前置」结构，后确认该仓库是半成品、无发布逻辑，实际以 NetOwl 的 tag message 叠加与预发布判定为准。action 统一用当前最新版主版本：checkout@v7、setup-java@v6、setup-android@v4、setup-gradle@v6、upload-artifact@v7、softprops/action-gh-release@v3。已通过 GitHub API 确认这些 tag 都存在。
 
 ## 密钥交付
 
