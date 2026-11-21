@@ -1,5 +1,7 @@
 package top.aico.wxcacheviewer.ui.gallery
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,14 +23,27 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.data.repository.GridMode
+import top.aico.wxcacheviewer.data.root.RootCommandExecutor
+import top.aico.wxcacheviewer.data.thumbnail.ThumbnailLoader
+import top.aico.wxcacheviewer.domain.model.Account
 import top.aico.wxcacheviewer.domain.model.CacheFile
+import top.aico.wxcacheviewer.ui.account.AccountSwitchDialog
 import top.aico.wxcacheviewer.ui.common.ErrorView
 import top.aico.wxcacheviewer.ui.common.LoadingView
 import top.aico.wxcacheviewer.ui.common.formatFileSize
@@ -38,12 +53,24 @@ import top.aico.wxcacheviewer.viewmodel.GalleryUiState
 @Composable
 fun GalleryScreen(
     state: GalleryUiState,
+    accountHash: String,
     title: String,
+    accounts: List<Account>,
+    remarks: Map<String, String>,
     canSwitchAccount: Boolean,
     onToggleGridMode: () -> Unit,
-    onRequestSwitch: () -> Unit,
+    onSwitchAccount: (String) -> Unit,
+    onSaveRemark: (String, String) -> Unit,
     onRetry: () -> Unit
 ) {
+    val context = LocalContext.current
+    val thumbnailLoader = remember { ThumbnailLoader(context, RootCommandExecutor()) }
+    LaunchedEffect(accountHash) {
+        thumbnailLoader.clear()
+    }
+
+    var showSwitchDialog by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -58,7 +85,7 @@ fun GalleryScreen(
                             }
                         )
                     }
-                    TextButton(onClick = onRequestSwitch, enabled = canSwitchAccount) {
+                    TextButton(onClick = { showSwitchDialog = true }, enabled = canSwitchAccount) {
                         Text(text = stringResource(id = R.string.switch_account))
                     }
                 }
@@ -85,32 +112,63 @@ fun GalleryScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(items = state.files, key = { it.name }) { file ->
-                    CacheFileTile(file = file)
+                    CacheFileTile(file = file, thumbnailLoader = thumbnailLoader)
                 }
             }
         }
     }
+
+    if (showSwitchDialog) {
+        AccountSwitchDialog(
+            accounts = accounts,
+            remarks = remarks,
+            currentHash = accountHash,
+            onSelect = {
+                onSwitchAccount(it)
+                showSwitchDialog = false
+            },
+            onSaveRemark = onSaveRemark,
+            onDismiss = { showSwitchDialog = false }
+        )
+    }
 }
 
 @Composable
-private fun CacheFileTile(file: CacheFile) {
+private fun CacheFileTile(file: CacheFile, thumbnailLoader: ThumbnailLoader) {
+    val bitmap by produceState<Bitmap?>(
+        initialValue = null,
+        key1 = file.accountHash,
+        key2 = file.name
+    ) {
+        value = thumbnailLoader.load(file.accountHash, file)
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = file.type.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            val previewModifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(16f / 9f)
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap!!.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = previewModifier,
+                    contentScale = ContentScale.Crop
                 )
+            } else {
+                Box(
+                    modifier = previewModifier.background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = file.type.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             Column(modifier = Modifier.padding(8.dp)) {
                 Text(

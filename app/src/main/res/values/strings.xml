@@ -13,6 +13,7 @@
     <string name="switch_to_one_column">一列</string>
     <string name="switch_to_two_columns">两列</string>
     <string name="switch_account">切换账号</string>
+    <string name="cancel">取消</string>
     <string name="root_error_no_su">未检测到 root 权限，请确认设备已 root 并安装 su</string>
     <string name="root_error_denied">su 授权被拒绝，请在 Magisk 中允许本应用</string>
     <string name="root_error_timeout">root 授权超时，请重试</string>
