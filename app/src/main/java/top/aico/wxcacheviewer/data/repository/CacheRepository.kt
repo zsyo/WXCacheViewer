@@ -2,6 +2,7 @@ package top.aico.wxcacheviewer.data.repository
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import top.aico.wxcacheviewer.data.log.AppLog
 import top.aico.wxcacheviewer.data.root.AccountDiscoveryParser
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
 import top.aico.wxcacheviewer.data.root.RootState
@@ -25,7 +26,37 @@ data class SourceListing(
     val truncated: Boolean = false
 )
 
+/**
+ * 分页游标：第几个源的第几个位置。
+ *
+ * 位置的含义随源类型变化——递归源是「下一个一级子目录的序号」，
+ * 扁平源是「已经取过的文件条数」。游标对界面是不透明标识，原样带回即可。
+ */
+data class PageCursor(val sourceIndex: Int, val position: Int)
+
+/**
+ * 一页结果。[nextCursor] 为 null 表示已经到底；[error] 非空表示这一页读取失败，
+ * 但界面可以先展示已拿到的内容，不必整页报错。
+ */
+data class SourcePage(
+    val files: List<CacheFile>,
+    val nextCursor: PageCursor? = null,
+    val error: String? = null
+)
+
 class CacheRepository(private val executor: RootCommandExecutor) {
+
+    /** 顶层子目录列表只在内存里缓存，下拉刷新时清空。 */
+    private val subDirCache = HashMap<String, List<String>>()
+
+    /** 一次分页取到的切片，[nextPosition] 为空表示这个源已经取完。 */
+    private data class Slice(
+        val files: List<CacheFile>,
+        val nextPosition: Int?,
+        val error: String?
+    )
+
+    fun invalidate() = subDirCache.clear()
 
     suspend fun checkRoot(): RootState = executor.checkRoot()
 
@@ -37,39 +68,203 @@ class CacheRepository(private val executor: RootCommandExecutor) {
         AccountDiscoveryParser.parse(listing.stdout)
     }
 
-    /** 列出多个缓存源；递归源合并后按修改时间倒序截断，避免上千个文件拖垮首屏。 */
+    /**
+     * 取一页文件。[cursor] 传 null 表示第一页。
+     *
+     * 两类源都分页，只是切法不同：递归源（聊天图片、朋友圈）一次扫一个一级子目录；
+     * 扁平源（视频号、聊天视频、表情）按文件名倒序切片，一页只 `stat` 几十个文件。
+     * 这样首屏耗时与缓存总量脱钩，切标签页不再需要等一次全量扫描。
+     */
+    suspend fun loadPage(
+        hash: String,
+        sources: List<CacheSource>,
+        cursor: PageCursor?
+    ): SourcePage = withContext(Dispatchers.IO) {
+        var index = cursor?.sourceIndex ?: 0
+        var position = cursor?.position ?: 0
+        var skipped = 0
+
+        while (index < sources.size) {
+            val source = sources[index]
+            val slice = if (source.recursive) {
+                dirSlice(hash, source, position)
+            } else {
+                flatSlice(hash, source, position)
+            }
+            val next = when {
+                slice.nextPosition != null -> PageCursor(index, slice.nextPosition)
+                index + 1 < sources.size -> PageCursor(index + 1, 0)
+                else -> null
+            }
+
+            if (slice.files.isNotEmpty()) {
+                // 首页读不到才把错误交给界面；中间某页失败只记日志，继续往下翻
+                return@withContext SourcePage(slice.files, next, null)
+            }
+            if (cursor == null && slice.error != null) {
+                return@withContext SourcePage(emptyList(), null, slice.error)
+            }
+            if (next == null) return@withContext SourcePage(emptyList(), null, null)
+            // 空页继续往后翻，但别让它无休止地跳（例如整棵树都是空目录）
+            if (skipped++ >= MAX_SKIPPED_SLICES) {
+                return@withContext SourcePage(emptyList(), next, null)
+            }
+            index = next.sourceIndex
+            position = next.position
+        }
+        SourcePage(emptyList(), null, null)
+    }
+
+    /**
+     * 一次性列完（供测试与「全量」场景使用）。会连续翻页，页数有上限。
+     */
     suspend fun listFiles(hash: String, sources: List<CacheSource>): SourceListing =
         withContext(Dispatchers.IO) {
-            val collected = ArrayList<CacheFile>()
-            sources.forEach { source -> collected += listSource(hash, source) }
-            if (sources.none { it.recursive }) return@withContext SourceListing(collected)
-            val ordered = collected.sortedByDescending { it.modifiedAt }
-            SourceListing(ordered.take(MAX_RECURSIVE_ITEMS), ordered.size > MAX_RECURSIVE_ITEMS)
+            invalidate()
+            val files = ArrayList<CacheFile>()
+            var cursor: PageCursor? = null
+            var pages = 0
+            do {
+                val page = loadPage(hash, sources, cursor)
+                files += page.files
+                cursor = page.nextCursor
+                pages++
+                page.error?.let { throw IllegalStateException(it) }
+            } while (cursor != null && pages < MAX_DRAIN_PAGES)
+            SourceListing(files, truncated = cursor != null)
         }
 
     /** 旧签名：只列视频号缓存。 */
     suspend fun listFiles(hash: String): List<CacheFile> =
         listFiles(hash, listOf(SourceRegistry.FINDER_VIDEO)).files
 
-    private suspend fun listSource(hash: String, source: CacheSource): List<CacheFile> {
+    /** 扁平源的一页：只对本页这几十个文件执行 stat。 */
+    private suspend fun flatSlice(hash: String, source: CacheSource, offset: Int): Slice {
+        val limit = source.pageSize
         var result = executor.run(
-            WxPaths.listSourceFilesCommand(hash, source),
+            WxPaths.listSourcePageCommand(hash, source, offset, limit),
             source.listTimeoutMs
         )
         // 部分机型的 stat 不支持 -c，此时改用 wc -c 取大小重试一次。
-        if (result.exitCode != 0 && !source.recursive &&
-            result.stderr.contains("stat", ignoreCase = true)
-        ) {
+        if (result.exitCode != 0 && result.stderr.contains("stat", ignoreCase = true)) {
             result = executor.run(
-                WxPaths.listSourceFilesCommand(hash, source, useWcForSize = true),
+                WxPaths.listSourcePageCommand(hash, source, offset, limit, useWcForSize = true),
                 source.listTimeoutMs
             )
         }
+        val lines = result.stdout.lines().filter { it.isNotBlank() }
+        val files = lines.mapNotNull { parseLine(source, hash, it) }
+
         if (result.exitCode != 0) {
-            throw IllegalStateException(result.stderr.ifBlank { "缓存文件读取失败" })
+            AppLog.log(
+                "repo",
+                "flat page failed ${source.id}@$offset exit=${result.exitCode} " +
+                    "timedOut=${result.timedOut} err=${result.stderr.take(160)}"
+            )
+            if (files.isNotEmpty()) return Slice(files, offset + limit, null)
+            val message = when {
+                result.timedOut -> "读取超时，请稍后下拉重试"
+                else -> result.stderr.ifBlank { "缓存文件读取失败" }
+            }
+            return Slice(emptyList(), null, message)
         }
-        return result.stdout.lines().mapNotNull { parseLine(source, hash, it) }
+        if (files.isEmpty() && lines.isNotEmpty()) {
+            AppLog.log(
+                "repo",
+                "flat page parse failed ${source.id}@$offset lines=${lines.size} " +
+                    "sample=${lines.first().take(160)}"
+            )
+            return Slice(emptyList(), null, "文件列表格式异常")
+        }
+        // 本页取满说明后面可能还有；不满就是最后一页
+        val next = if (lines.size >= limit) offset + limit else null
+        return Slice(files.sortedByDescending { it.modifiedAt }, next, null)
     }
+
+    /** 递归源的一页：只扫一个一级子目录。 */
+    private suspend fun dirSlice(hash: String, source: CacheSource, dirIndex: Int): Slice {
+        val dirs = subDirs(hash, source)
+        if (dirIndex >= dirs.size) return Slice(emptyList(), null, null)
+        val page = listDirPage(hash, source, dirs[dirIndex])
+        val next = if (dirIndex + 1 < dirs.size) dirIndex + 1 else null
+        return Slice(page.files, next, page.error)
+    }
+
+    /**
+     * 递归源的一级子目录，按修改时间倒序。一次 `stat` 就能拿到几百个目录的时间，
+     * 拿不到（老版本 toybox 的 stat 不支持 %n）时退回只取目录名。
+     */
+    private suspend fun subDirs(hash: String, source: CacheSource): List<String> {
+        val cacheKey = "$hash:${source.id}"
+        subDirCache[cacheKey]?.let { return it }
+
+        val timed = executor.run(WxPaths.listSourceSubDirsCommand(hash, source), source.listTimeoutMs)
+        val dirs = timed.stdout.lines().mapNotNull { line ->
+            val space = line.indexOf(' ')
+            if (space <= 0) return@mapNotNull null
+            val mtime = line.substring(0, space).toLongOrNull() ?: return@mapNotNull null
+            val name = line.substring(space + 1).trim().trimEnd('/').substringAfterLast('/')
+            if (!SourceRegistry.isSafeSegment(name)) null else name to mtime
+        }.sortedByDescending { it.second }.map { it.first }
+
+        val resolved = if (dirs.isNotEmpty()) {
+            dirs
+        } else {
+            // 兜底：只列名字，顺序按文件系统默认
+            executor.run(WxPaths.listSourceSubDirNamesCommand(hash, source), source.listTimeoutMs)
+                .stdout.lines()
+                .map { it.trim().trimEnd('/').substringAfterLast('/') }
+                .filter { SourceRegistry.isSafeSegment(it) }
+        }
+        AppLog.log("repo", "subdirs ${source.id}: ${resolved.size}")
+        subDirCache[cacheKey] = resolved
+        return resolved
+    }
+
+    /** 扫描一个一级子目录，作为一页。失败只记日志，不影响其它页。 */
+    private suspend fun listDirPage(
+        hash: String,
+        source: CacheSource,
+        dirName: String
+    ): DirPage {
+        val result = executor.run(
+            WxPaths.listSourceDirPageCommand(hash, source, dirName),
+            source.listTimeoutMs
+        )
+        val lines = result.stdout.lines().filter { it.isNotBlank() }
+        val files = lines.mapNotNull { parseLine(source, hash, it) }
+
+        if (result.exitCode != 0) {
+            AppLog.log(
+                "repo",
+                "page failed ${source.id}/$dirName exit=${result.exitCode} " +
+                    "timedOut=${result.timedOut} err=${result.stderr.take(160)}"
+            )
+            // 超时也可能已经读到一部分，能解析就先用着，界面可以继续往下翻
+            if (files.isNotEmpty()) {
+                return DirPage(files.sortedByDescending { it.modifiedAt }, null)
+            }
+            val message = when {
+                result.timedOut -> "读取超时，请稍后下拉重试"
+                else -> result.stderr.ifBlank { "缓存文件读取失败" }
+            }
+            return DirPage(emptyList(), message)
+        }
+
+        // 命令成功却有输出、却一个都解析不出来：shell 侧字段与约定不一致。
+        // 不能当作空目录跳过，否则界面会显示「没有缓存」，把真正的 bug 藏起来。
+        if (files.isEmpty() && lines.isNotEmpty()) {
+            AppLog.log(
+                "repo",
+                "page parse failed ${source.id}/$dirName lines=${lines.size} " +
+                    "sample=${lines.first().take(160)}"
+            )
+            return DirPage(emptyList(), "文件列表格式异常")
+        }
+        return DirPage(files.sortedByDescending { it.modifiedAt }, null)
+    }
+
+    private data class DirPage(val files: List<CacheFile>, val error: String?)
 
     /**
      * 一行六个字段：文件名、字节数、mtime、文件头 hex、相对路径、是否有同名 jpg 首帧。
@@ -153,7 +348,10 @@ class CacheRepository(private val executor: RootCommandExecutor) {
     private companion object {
         const val OK_MARK = "OK"
 
-        /** 递归源单次最多展示的文件数。 */
-        const val MAX_RECURSIVE_ITEMS = 1500
+        /** 全量列举时的翻页上限，防止异常目录导致死循环。 */
+        const val MAX_DRAIN_PAGES = 600
+
+        /** 一次加载里最多跳过多少个空页（空子目录、超出末尾），避免空目录拖着界面干等。 */
+        const val MAX_SKIPPED_SLICES = 12
     }
 }

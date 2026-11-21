@@ -57,6 +57,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -69,6 +70,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.flow.first
 import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.data.image.CoilImageLoaders
 import top.aico.wxcacheviewer.data.media.MediaPreparer
@@ -95,6 +97,9 @@ import top.aico.wxcacheviewer.viewmodel.BatchProgress
 import top.aico.wxcacheviewer.viewmodel.GalleryUiState
 import java.io.File
 
+/** 倒数第几项进入可视区域就开始取下一页，留一点提前量避免等到底。 */
+private const val LOAD_MORE_THRESHOLD = 6
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun GalleryScreen(
@@ -112,6 +117,7 @@ fun GalleryScreen(
     onSwitchAccount: (String) -> Unit,
     onSaveRemark: (String, String) -> Unit,
     onRefresh: () -> Unit,
+    onLoadMore: () -> Unit,
     onStartSelection: (CacheFile) -> Unit,
     onToggleSelection: (CacheFile) -> Unit,
     onToggleSelectAll: () -> Unit,
@@ -141,6 +147,14 @@ fun GalleryScreen(
         if (state.files.isNotEmpty()) {
             gridState.scrollToItem(0)
         }
+    }
+
+    // 滚到快结尾时自动取下一页；files.size 变化后重新监听，形成「滚到底→加载→再滚」的循环。
+    LaunchedEffect(state.hasMore, state.loadingMore, state.files.size) {
+        if (!state.hasMore || state.loadingMore) return@LaunchedEffect
+        snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .first { it >= state.files.size - LOAD_MORE_THRESHOLD }
+        onLoadMore()
     }
 
     BackHandler(enabled = state.selectionMode) { onExitSelection() }
@@ -261,7 +275,7 @@ fun GalleryScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(items = state.files, key = { it.name }) { file ->
+                        items(items = state.files, key = { it.key }) { file ->
                             val selected = file.key in state.selectedKeys
                             CacheFileTile(
                                 file = file,
@@ -284,6 +298,14 @@ fun GalleryScreen(
                                     }
                                 }
                             )
+                        }
+                        if (state.hasMore) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                LoadMoreFooter(
+                                    loading = state.loadingMore,
+                                    onLoadMore = onLoadMore
+                                )
+                            }
                         }
                     }
                 }
@@ -473,6 +495,41 @@ private fun BatchProgressRow(progress: BatchProgress) {
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+/**
+ * 列表底部：还有下一页时显示加载动画；万一自动加载没触发（比如首屏没铺满），
+ * 这里还留一个可点的「加载更多」按钮兜底。
+ */
+@Composable
+private fun LoadMoreFooter(loading: Boolean, onLoadMore: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 20.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (loading) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp
+                )
+                Text(
+                    text = stringResource(id = R.string.loading_more),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            TextButton(onClick = onLoadMore) {
+                Text(text = stringResource(id = R.string.load_more))
+            }
+        }
     }
 }
 

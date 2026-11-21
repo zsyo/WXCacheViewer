@@ -2,6 +2,8 @@ package top.aico.wxcacheviewer.data.repository
 
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
@@ -13,6 +15,7 @@ class CacheRepositoryTest {
 
     private val hash = "ffdef473a3a56cbf6d38456a41f52f46"
     private val header = "000000206674797069736f6d0000020069736f6d69736f32617663316d703431"
+    private val thumb = "th_9213f8de4b8e6b5534fd84c15ddc358d"
 
     private class FakeExecutor(private vararg val results: ShellResult) : RootCommandExecutor() {
         val commands = mutableListOf<String>()
@@ -20,6 +23,31 @@ class CacheRepositoryTest {
         override suspend fun run(command: String, timeoutMs: Long): ShellResult {
             commands += command
             return results[minOf(commands.size - 1, results.size - 1)]
+        }
+    }
+
+    /** 按命令内容分派响应，用于覆盖「列子目录 → 扫单目录」的分页流程。 */
+    private class RoutingExecutor(private val handler: (String) -> ShellResult) :
+        RootCommandExecutor() {
+        val commands = mutableListOf<String>()
+
+        override suspend fun run(command: String, timeoutMs: Long): ShellResult {
+            commands += command
+            return handler(command)
+        }
+    }
+
+    private fun pageLine(relativePath: String, mtime: Long, size: Long = 1024): String {
+        val name = relativePath.substringAfterLast('/')
+        return "$name\t$size\t$mtime\t-\t$relativePath\t0"
+    }
+
+    /** 只有一个子目录 `00`、内容固定的递归源执行器。 */
+    private fun singleDirExecutor(pageStdout: String) = RoutingExecutor { command ->
+        when {
+            command.contains("stat -c '%Y %n'") -> ShellResult("1795000000 00/", 0, "")
+            command.contains("find ") -> ShellResult(pageStdout, 0, "")
+            else -> ShellResult("", 0, "")
         }
     }
 
@@ -33,10 +61,13 @@ class CacheRepositoryTest {
         val files = CacheRepository(FakeExecutor(ShellResult(stdout, 0, ""))).listFiles(hash)
 
         assertEquals(2, files.size)
-        assertEquals(FileType.MP4, files[0].type)
-        assertEquals(4490777L, files[0].size)
-        assertEquals(1795000001L, files[0].modifiedAt)
-        assertTrue(files[0].name.startsWith("finder_video_xWT101"))
+        // 页内按修改时间倒序，因此不按 shell 输出顺序断言
+        val newest = files.first()
+        assertEquals(FileType.MP4, newest.type)
+        assertEquals(6847763L, newest.size)
+        assertEquals(1795000002L, newest.modifiedAt)
+        assertEquals(4490777L, files.last().size)
+        assertTrue(files.any { it.name.startsWith("finder_video_xWT101") })
     }
 
     @Test
@@ -72,13 +103,12 @@ class CacheRepositoryTest {
 
     @Test
     fun keepsNestedRelativePathAndDropsMismatchedName() = runBlocking {
-        val thumb = "th_9213f8de4b8e6b5534fd84c15ddc358d"
         val stdout = listOf(
-            "$thumb\t1024\t1795000004\t-\t00/09/$thumb\t0",
+            pageLine("00/09/$thumb", 1795000004),
             // 文件名与相对路径的末段不一致，视为不可信输出
             "$thumb\t1024\t1795000004\t-\t01/0a/th_00000000000000000000000000000000\t0"
         ).joinToString("\n")
-        val files = CacheRepository(FakeExecutor(ShellResult(stdout, 0, "")))
+        val files = CacheRepository(singleDirExecutor(stdout))
             .listFiles(hash, listOf(SourceRegistry.CHAT_IMAGE)).files
 
         assertEquals(1, files.size)
@@ -87,15 +117,133 @@ class CacheRepositoryTest {
     }
 
     @Test
-    fun recursiveListingKeepsNewestItemsOnly() = runBlocking {
-        val stdout = (1..2).joinToString("\n") { index ->
-            "th_9213f8de4b8e6b5534fd84c15ddc358$index\t1\t${1795000000 + index}\t-\t0$index/09/th_9213f8de4b8e6b5534fd84c15ddc358$index\t0"
+    fun newestSubDirIsScannedFirst() = runBlocking {
+        val executor = RoutingExecutor { command ->
+            when {
+                // 子目录按 mtime 倒序：11 更新，应排在 00 前面
+                command.contains("stat -c '%Y %n'") ->
+                    ShellResult("1795000000 00/\n1795000900 11/", 0, "")
+                command.contains("/11'") -> ShellResult(pageLine("11/09/$thumb", 1795001000), 0, "")
+                command.contains("/00'") -> ShellResult(pageLine("00/09/$thumb", 1795000100), 0, "")
+                else -> ShellResult("", 0, "")
+            }
         }
-        val listing = CacheRepository(FakeExecutor(ShellResult(stdout, 0, "")))
-            .listFiles(hash, listOf(SourceRegistry.CHAT_IMAGE))
+        val repo = CacheRepository(executor)
 
-        assertEquals(2, listing.files.size)
-        assertTrue(listing.files[0].modifiedAt > listing.files[1].modifiedAt)
-        assertTrue(!listing.truncated)
+        val first = repo.loadPage(hash, listOf(SourceRegistry.CHAT_IMAGE), null)
+        assertEquals("11/09/$thumb", first.files.single().relativePath)
+        assertNotNull(first.nextCursor)
+
+        val second = repo.loadPage(hash, listOf(SourceRegistry.CHAT_IMAGE), first.nextCursor)
+        assertEquals("00/09/$thumb", second.files.single().relativePath)
+        assertNull(second.nextCursor)
+    }
+
+    @Test
+    fun firstPageFailureIsReportedWithTimeoutMessage() = runBlocking {
+        val executor = RoutingExecutor { command ->
+            when {
+                command.contains("stat -c '%Y %n'") -> ShellResult("1795000000 00/", 0, "")
+                command.contains("find ") -> ShellResult("", -1, "命令超时", timedOut = true)
+                else -> ShellResult("", 0, "")
+            }
+        }
+        val page = CacheRepository(executor)
+            .loadPage(hash, listOf(SourceRegistry.CHAT_IMAGE), null)
+
+        assertTrue(page.files.isEmpty())
+        assertNull(page.nextCursor)
+        assertTrue(page.error!!.contains("超时"))
+    }
+
+    @Test
+    fun emptySubDirIsSkippedAutomatically() = runBlocking {
+        val executor = RoutingExecutor { command ->
+            when {
+                command.contains("stat -c '%Y %n'") ->
+                    ShellResult("1795000900 11/\n1795000000 00/", 0, "")
+                command.contains("/11'") -> ShellResult("", 0, "")
+                command.contains("/00'") -> ShellResult(pageLine("00/09/$thumb", 1795000100), 0, "")
+                else -> ShellResult("", 0, "")
+            }
+        }
+        val page = CacheRepository(executor).loadPage(hash, listOf(SourceRegistry.CHAT_IMAGE), null)
+
+        assertEquals("00/09/$thumb", page.files.single().relativePath)
+        assertNull(page.nextCursor)
+    }
+
+    @Test
+    fun unparsablePageIsReportedInsteadOfTreatedAsEmptyDir() = runBlocking {
+        // 真实踩过的坑：shell 侧写成 `while IFS= read -r sz mt path`，IFS 被置空后
+        // 整行全落进第一列，输出退化成「文件名和路径都是空、中间一列挤成一团」。
+        // 这种页面不能被当成空目录跳过，否则界面只会显示「该账号没有此类型的缓存」。
+        val broken =
+            "\t6004 1790336752 /data/user/0/com.tencent.mm/MicroMsg/$hash/image2/00/09/$thumb\t\t-\t\t0"
+        val page = CacheRepository(singleDirExecutor(broken))
+            .loadPage(hash, listOf(SourceRegistry.CHAT_IMAGE), null)
+
+        assertTrue(page.files.isEmpty())
+        assertEquals("文件列表格式异常", page.error)
+    }
+
+    /** 聊天视频的一行六字段输出。 */
+    private fun videoLine(name: String, mtime: Long): String =
+        "$name\t1024\t$mtime\t-\t$name\t0"
+
+    @Test
+    fun flatSourcePagesByOffset() = runBlocking {
+        // 页大小压到 2，方便用三行数据覆盖「满页 → 有下一页」和「不满页 → 到底」
+        val small = SourceRegistry.CHAT_VIDEO.copy(pageSize = 2)
+        val executor = RoutingExecutor { command ->
+            when {
+                command.contains("-le 0 ]") -> ShellResult(
+                    listOf(
+                        videoLine("2609251653228091.mp4", 1795000001),
+                        videoLine("2609251653228092.mp4", 1795000002)
+                    ).joinToString("\n"),
+                    0,
+                    ""
+                )
+                else -> ShellResult(videoLine("2609251653228093.mp4", 1795000003), 0, "")
+            }
+        }
+        val repo = CacheRepository(executor)
+
+        val first = repo.loadPage(hash, listOf(small), null)
+        assertEquals(2, first.files.size)
+        assertEquals(PageCursor(0, 2), first.nextCursor)
+
+        val second = repo.loadPage(hash, listOf(small), first.nextCursor)
+        assertEquals(1, second.files.size)
+        assertNull(second.nextCursor)
+    }
+
+    @Test
+    fun flatSourcePageUsesSourcePageSize() = runBlocking {
+        val executor = FakeExecutor(ShellResult("", 0, ""))
+        CacheRepository(executor).loadPage(hash, listOf(SourceRegistry.EMOJI), null)
+
+        assertEquals(1, executor.commands.size)
+        // 默认一页 60 个；命令里体现为「跳过 0 个、超过 60 个就 break」
+        assertTrue(executor.commands[0].contains("-le 0 ]"))
+        assertTrue(executor.commands[0].contains("-gt 60 ]"))
+    }
+
+    @Test
+    fun fallsBackToDirNamesWhenStatLacksNamePlaceholder() = runBlocking {
+        val executor = RoutingExecutor { command ->
+            when {
+                // 模拟 stat 不支持 %n：一行都解析不出来
+                command.contains("stat -c '%Y %n'") -> ShellResult("", 0, "")
+                command.contains("ls -1") -> ShellResult("00\n01\nbroken name\n", 0, "")
+                command.contains("/00'") -> ShellResult(pageLine("00/09/$thumb", 1795000100), 0, "")
+                else -> ShellResult("", 0, "")
+            }
+        }
+        val page = CacheRepository(executor).loadPage(hash, listOf(SourceRegistry.CHAT_IMAGE), null)
+
+        assertEquals(1, page.files.size)
+        assertNull(page.error)
     }
 }

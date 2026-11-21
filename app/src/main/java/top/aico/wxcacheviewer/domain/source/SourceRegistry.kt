@@ -103,6 +103,13 @@ object SourceRegistry {
     /** 递归源最多允许的目录层数（相对路径段数，含文件名）。 */
     private const val MAX_PATH_LENGTH = 512
 
+    /** 单段目录名允许的字符：分页时要把顶层子目录名拼进命令，必须先卡住形状。 */
+    private val SAFE_SEGMENT = Regex("^[0-9A-Za-z._-]{1,32}$")
+
+    /** 分页用的单级目录名是否安全（不含分隔符、不是 `.`/`..`）。 */
+    fun isSafeSegment(value: String): Boolean =
+        SAFE_SEGMENT.matches(value) && value != "." && value != ".."
+
     /**
      * 相对路径白名单：先做通用的段级检查，再匹配该源的正则。
      *

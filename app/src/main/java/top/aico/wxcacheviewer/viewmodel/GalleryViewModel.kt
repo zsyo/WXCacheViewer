@@ -13,8 +13,8 @@ import kotlinx.coroutines.launch
 import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.data.repository.CacheRepository
 import top.aico.wxcacheviewer.data.repository.GridMode
+import top.aico.wxcacheviewer.data.repository.PageCursor
 import top.aico.wxcacheviewer.data.repository.SettingsRepository
-import top.aico.wxcacheviewer.data.repository.SourceListing
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
 import top.aico.wxcacheviewer.domain.CacheFileSorter
 import top.aico.wxcacheviewer.domain.model.CacheFile
@@ -39,8 +39,10 @@ data class GalleryUiState(
     val tab: SourceTab = SourceTab.FINDER,
     val loading: Boolean = true,
     val files: List<CacheFile> = emptyList(),
-    /** 递归源文件过多被截断时为 true，界面给出提示。 */
-    val truncated: Boolean = false,
+    /** 还有没取完的页；底部据此显示加载中或「加载更多」。 */
+    val hasMore: Boolean = false,
+    /** 正在取下一页，避免重复触发。 */
+    val loadingMore: Boolean = false,
     val gridMode: GridMode = GridMode.TWO,
     val sortOption: SortOption = SortOption(),
     val refreshing: Boolean = false,
@@ -77,17 +79,68 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     )
     val uiState: StateFlow<GalleryUiState> = _uiState.asStateFlow()
 
+    /** 下一页的游标；null 表示没有更多。 */
+    private var cursor: PageCursor? = null
+
     fun load(accountHash: String, tab: SourceTab) {
         viewModelScope.launch {
-            _uiState.update { it.copy(tab = tab, loading = true, error = null) }
+            repository.invalidate()
+            cursor = null
+            _uiState.update {
+                it.copy(
+                    tab = tab,
+                    loading = true,
+                    error = null,
+                    files = emptyList(),
+                    hasMore = false,
+                    loadingMore = false,
+                    selectionMode = false,
+                    selectedKeys = emptySet()
+                )
+            }
             try {
-                val listing = repository.listFiles(accountHash, tab.sources)
+                val page = repository.loadPage(accountHash, tab.sources, null)
+                cursor = page.nextCursor
                 _uiState.update {
-                    it.withFiles(listing)
-                        .copy(loading = false, resetScrollToken = it.resetScrollToken + 1)
+                    it.copy(
+                        files = sortPage(page.files, it.sortOption),
+                        loading = false,
+                        hasMore = page.nextCursor != null,
+                        error = page.error,
+                        resetScrollToken = it.resetScrollToken + 1
+                    )
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(loading = false, error = e.message ?: "读取缓存文件失败") }
+            }
+        }
+    }
+
+    /**
+     * 取下一页并追加到列表末尾。滚动快到底部时调用，重复调用会被 [GalleryUiState.loadingMore] 挡掉。
+     */
+    fun loadMore(accountHash: String) {
+        val state = _uiState.value
+        val next = cursor
+        if (state.loading || state.loadingMore || next == null) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(loadingMore = true) }
+            try {
+                val page = repository.loadPage(accountHash, state.tab.sources, next)
+                cursor = page.nextCursor
+                _uiState.update {
+                    val merged = it.files + sortPage(page.files, it.sortOption)
+                    it.copy(
+                        files = merged,
+                        loadingMore = false,
+                        hasMore = page.nextCursor != null,
+                        error = page.error
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(loadingMore = false, error = e.message ?: "读取缓存文件失败")
+                }
             }
         }
     }
@@ -100,11 +153,19 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val tab = _uiState.value.tab
         viewModelScope.launch {
             _uiState.update { it.copy(refreshing = true, error = null) }
+            repository.invalidate()
+            cursor = null
             try {
-                val listing = repository.listFiles(accountHash, tab.sources)
+                val page = repository.loadPage(accountHash, tab.sources, null)
+                cursor = page.nextCursor
                 _uiState.update {
-                    it.withFiles(listing)
-                        .copy(refreshing = false, resetScrollToken = it.resetScrollToken + 1)
+                    it.copy(
+                        files = sortPage(page.files, it.sortOption),
+                        refreshing = false,
+                        hasMore = page.nextCursor != null,
+                        error = page.error,
+                        resetScrollToken = it.resetScrollToken + 1
+                    )
                 }
             } catch (e: Exception) {
                 _uiState.update {
@@ -113,6 +174,10 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             }
         }
     }
+
+    /** 每页单独排序：分页加载时不能对全部已加载项重排，否则新页会把列表顶得乱跳。 */
+    private fun sortPage(files: List<CacheFile>, option: SortOption): List<CacheFile> =
+        CacheFileSorter.sort(files, option)
 
     fun setGridMode(mode: GridMode) {
         if (_uiState.value.gridMode == mode) return
@@ -329,21 +394,6 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     private fun GalleryUiState.selectedFiles(): List<CacheFile> =
         files.filter { it.key in selectedKeys }
-
-    /**
-     * 换入新的文件列表：按当前排序规则重排，并把已不存在的文件从选中集合中剔除，
-     * 避免刷新后残留无效选中项。
-     */
-    private fun GalleryUiState.withFiles(listing: SourceListing): GalleryUiState {
-        val sorted = CacheFileSorter.sort(listing.files, sortOption)
-        val keys = sorted.mapTo(HashSet()) { it.key }
-        return copy(
-            files = sorted,
-            truncated = listing.truncated,
-            selectedKeys = selectedKeys.filterTo(HashSet()) { it in keys },
-            selectionMode = selectionMode && sorted.isNotEmpty()
-        )
-    }
 
     private data class ExportTarget(val directory: File, val label: String)
 

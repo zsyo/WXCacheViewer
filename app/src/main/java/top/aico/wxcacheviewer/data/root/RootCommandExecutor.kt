@@ -1,12 +1,14 @@
 package top.aico.wxcacheviewer.data.root
 
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
 import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import top.aico.wxcacheviewer.data.log.AppLog
 import java.io.IOException
+import java.io.InputStream
 
 data class ShellResult(
     val stdout: String,
@@ -42,8 +44,11 @@ open class RootCommandExecutor {
     @Volatile
     private var mode: NamespaceMode? = null
 
+    /** 命名空间探测要跑三次 su，并发首次调用会各探一遍，这里保证只探一次。 */
+    private val modeLock = Mutex()
+
     open suspend fun run(command: String, timeoutMs: Long = DEFAULT_TIMEOUT_MS): ShellResult {
-        val resolved = mode ?: resolveMode().also { mode = it }
+        val resolved = currentMode()
         return when (resolved) {
             NamespaceMode.DIRECT -> execute(listOf("su", "-c", command), timeoutMs)
             NamespaceMode.MOUNT_MASTER -> execute(listOf("su", "-mm", "-c", command), timeoutMs)
@@ -66,7 +71,12 @@ open class RootCommandExecutor {
         }
     }
 
-    suspend fun currentMode(): NamespaceMode = mode ?: resolveMode().also { mode = it }
+    suspend fun currentMode(): NamespaceMode {
+        mode?.let { return it }
+        return modeLock.withLock {
+            mode ?: resolveMode().also { mode = it }
+        }
+    }
 
     private suspend fun resolveMode(): NamespaceMode {
         val direct = execute(listOf("su", "-c", PROBE_COMMAND), PROBE_TIMEOUT_MS)
@@ -111,6 +121,14 @@ open class RootCommandExecutor {
         return visible >= expected * 0.8
     }
 
+    /**
+     * 执行一条命令并收集输出。
+     *
+     * stdout/stderr 由独立线程边读边写进缓冲，而不是等进程结束后一次性 `readText()`：
+     * 命令超时会被 `destroy()` 掉，管道随即关闭，正在阻塞的读取必然抛
+     * “read interrupted by close() on another thread”。旧实现把这个异常漏给了调用方，
+     * 于是界面显示一条看不懂的 Java 消息；现在读取异常只记日志，超时则带上已读到的部分输出。
+     */
     private suspend fun execute(argv: List<String>, timeoutMs: Long): ShellResult =
         withContext(Dispatchers.IO) {
             AppLog.log("shell", "run[${argv.joinToString(" ").take(120)}]: last=${argv.last().take(300).replace("\n", " ⏎ ")}")
@@ -121,8 +139,10 @@ open class RootCommandExecutor {
                 return@withContext ShellResult("", -127, e.message ?: "su unavailable")
             }
 
-            val stdoutDeferred = async { process.inputStream.bufferedReader().use { it.readText() } }
-            val stderrDeferred = async { process.errorStream.bufferedReader().use { it.readText() } }
+            val stdout = StringBuffer()
+            val stderr = StringBuffer()
+            val outThread = startReader(process.inputStream, stdout, "stdout")
+            val errThread = startReader(process.errorStream, stderr, "stderr")
 
             val finished = withTimeoutOrNull(timeoutMs) {
                 runInterruptible { process.waitFor() }
@@ -130,11 +150,22 @@ open class RootCommandExecutor {
 
             if (finished == null) {
                 process.destroy()
-                AppLog.log("shell", "timeout after ${timeoutMs}ms")
-                return@withContext ShellResult("", -1, "command timed out", timedOut = true)
+                closeQuietly(process.inputStream)
+                closeQuietly(process.errorStream)
+                outThread.join(READER_DRAIN_TIMEOUT_MS)
+                errThread.join(READER_DRAIN_TIMEOUT_MS)
+                AppLog.log("shell", "timeout after ${timeoutMs}ms, kept=${stdout.length}B")
+                return@withContext ShellResult(
+                    stdout.toString(),
+                    -1,
+                    TIMEOUT_MESSAGE,
+                    timedOut = true
+                )
             }
 
-            val result = ShellResult(stdoutDeferred.await(), process.exitValue(), stderrDeferred.await())
+            outThread.join()
+            errThread.join()
+            val result = ShellResult(stdout.toString(), process.exitValue(), stderr.toString())
             AppLog.log(
                 "shell",
                 "exit=${result.exitCode} out=${result.stdout.take(600).replace("\n", " ⏎ ")} " +
@@ -143,10 +174,37 @@ open class RootCommandExecutor {
             result
         }
 
+    private fun startReader(stream: InputStream, sink: StringBuffer, label: String): Thread =
+        Thread {
+            try {
+                stream.bufferedReader().use { reader ->
+                    while (true) {
+                        val line = reader.readLine() ?: break
+                        sink.append(line).append('\n')
+                    }
+                }
+            } catch (e: IOException) {
+                // 进程被 destroy() 后管道关闭，读取中断属预期情况，不能影响调用方。
+                AppLog.log("shell", "$label read stopped: ${e.message}")
+            }
+        }.apply {
+            name = "shell-$label"
+            isDaemon = true
+            start()
+        }
+
+    private fun closeQuietly(stream: InputStream) {
+        runCatching { stream.close() }
+    }
+
     companion object {
         const val DEFAULT_TIMEOUT_MS = 10_000L
         private const val PROBE_TIMEOUT_MS = 15_000L
         private const val MIN_PACKAGE_COUNT = 30
+
+        /** 关闭管道后等待读取线程收尾的时间，超时就不再等，避免卡住调用方。 */
+        private const val READER_DRAIN_TIMEOUT_MS = 1_000L
+        private const val TIMEOUT_MESSAGE = "命令超时"
 
         private const val PROBE_COMMAND =
             "echo visible=\$(ls -1 /data/user/0 2>/dev/null | wc -l) " +

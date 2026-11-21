@@ -28,8 +28,14 @@ object WxPaths {
     private val accountHashRegex = Regex("^[0-9a-f]{32}$")
     private val cacheFileNameRegex = Regex("^finder_video(?:_xWT[0-9]+)?__?[0-9a-f]{32}$")
 
-    /** 递归源扫描的行数上限，防止超大目录把 shell 输出撑爆内存。 */
-    private const val MAX_RECURSIVE_SCAN_LINES = 4000
+    /** 一页扫描的行数上限：单目录一般几十个文件，超出的先截断，避免极端目录拖慢一页。 */
+    private const val MAX_PAGE_SCAN_LINES = 400
+
+    /** 每次 stat 调用处理的文件数。批量调用远比逐个 fork 快，几千个文件也不至于超时。 */
+    private const val STAT_BATCH_SIZE = 200
+
+    /** 扁平源一页的条数上限，防止调用方传一个荒唐的 limit 把内存撑爆。 */
+    private const val MAX_PAGE_LIMIT = 500
 
     fun isValidAccountHash(value: String): Boolean = accountHashRegex.matches(value)
 
@@ -122,18 +128,61 @@ object WxPaths {
     }
 
     /**
-     * 列出某个缓存源的文件。每行六个 tab 分隔字段：
-     * 文件名、字节数、mtime、文件头 hex（`-` 表示不探测）、相对路径、是否已有同名 jpg 首帧。
-     * 后两个字段是新增的，旧的四字段解析仍然兼容。
+     * 扁平源（视频号、聊天视频、表情）的一次性列表，不分页。
+     * 界面已改用 [listSourcePageCommand]，这里保留给全量场景与测试。
      */
     fun listSourceFilesCommand(
         hash: String,
         source: CacheSource,
         useWcForSize: Boolean = false
-    ): String = if (source.recursive) {
-        recursiveListSourceCommand(hash, source)
-    } else {
-        flatListSourceCommand(hash, source, useWcForSize)
+    ): String {
+        require(!source.recursive) { "Recursive source must be paged: ${source.id}" }
+        return flatListSourceCommand(hash, source, useWcForSize)
+    }
+
+    /**
+     * 扁平源的一页：按文件名倒序，跳过 [offset] 条后取 [limit] 条。
+     *
+     * 目录里有几千个文件时，逐个 `stat` 的老写法要 fork 几千次进程，切个标签页就要等十几秒。
+     * 这里把「取哪一批」交给纯 shell 计数（`ls` 一次 + 循环内建判断，不 fork），
+     * 只对本页这几十个文件执行 `stat`，首屏开销与文件总数脱钩。
+     *
+     * 文件名倒序对带时间戳的源（聊天视频 `2609251653228091.mp4`）就是「最新在前」，
+     * 与界面默认的时间倒序一致；md5 命名的源顺序无语义，但不影响正确性。
+     */
+    fun listSourcePageCommand(
+        hash: String,
+        source: CacheSource,
+        offset: Int,
+        limit: Int,
+        useWcForSize: Boolean = false
+    ): String {
+        require(!source.recursive) { "Recursive source must be paged by dir: ${source.id}" }
+        require(offset >= 0) { "Invalid page offset: $offset" }
+        require(limit in 1..MAX_PAGE_LIMIT) { "Invalid page limit: $limit" }
+
+        val dir = shellQuote(sourceDir(hash, source))
+        val patterns = source.globs.joinToString("|")
+        val sizeExpression = sizeExpression(useWcForSize)
+        val headerExpression = headerExpression(source)
+        val thumbExpression = thumbExpression(source)
+        val end = offset + limit
+        return listOf(
+            "D=$dir",
+            "[ -d \"\$D\" ] || exit 0",
+            "i=0",
+            "ls -1r \"\$D\" 2>/dev/null | while IFS= read -r n; do",
+            "  case \"\$n\" in $patterns) ;; *) continue ;; esac",
+            "  f=\"\$D/\$n\"",
+            "  [ -f \"\$f\" ] || continue",
+            "  i=\$((i+1))",
+            "  if [ \"\$i\" -le $offset ]; then continue; fi",
+            "  if [ \"\$i\" -gt $end ]; then break; fi",
+            "  printf '%s\\t%s\\t%s\\t' \"\$n\" \"\$($sizeExpression)\" \"\$(stat -c %Y \"\$f\" 2>/dev/null || echo 0)\"",
+            "  $headerExpression",
+            "  printf '\\t%s\\t%s\\n' \"\$n\" \"$thumbExpression\"",
+            "done"
+        ).joinToString("\n")
     }
 
     private fun flatListSourceCommand(
@@ -142,50 +191,93 @@ object WxPaths {
         useWcForSize: Boolean
     ): String {
         val dir = shellQuote(sourceDir(hash, source))
-        val sizeExpression = if (useWcForSize) {
-            "\$(wc -c < \"\$f\")"
-        } else {
-            "stat -c %s \"\$f\" 2>/dev/null || wc -c < \"\$f\""
-        }
         val patterns = source.globs.joinToString(" ") { "$dir/$it" }
-        val headerExpression = if (source.probeHeader) {
-            "head -c 32 \"\$f\" | od -An -v -tx1 | tr -d ' \\n'"
-        } else {
-            "printf '%s' '-'"
-        }
-        val thumbExpression = if (source.hasJpegThumbnail) {
-            "\$([ -f \"\${f%.mp4}.jpg\" ] && echo 1 || echo 0)"
-        } else {
-            "0"
-        }
         return listOf(
             "for f in $patterns; do",
             "  [ -f \"\$f\" ] || continue",
-            "  printf '%s\\t%s\\t%s\\t' \"\$(basename \"\$f\")\" \"\$($sizeExpression)\" \"\$(stat -c %Y \"\$f\" 2>/dev/null || echo 0)\"",
-            "  $headerExpression",
-            "  printf '\\t%s\\t%s\\n' \"\$(basename \"\$f\")\" \"$thumbExpression\"",
+            "  printf '%s\\t%s\\t%s\\t' \"\$(basename \"\$f\")\" \"\$(${sizeExpression(useWcForSize)})\" \"\$(stat -c %Y \"\$f\" 2>/dev/null || echo 0)\"",
+            "  ${headerExpression(source)}",
+            "  printf '\\t%s\\t%s\\n' \"\$(basename \"\$f\")\" \"${thumbExpression(source)}\"",
             "done"
         ).joinToString("\n")
     }
 
+    private fun sizeExpression(useWcForSize: Boolean): String = if (useWcForSize) {
+        "\$(wc -c < \"\$f\")"
+    } else {
+        "stat -c %s \"\$f\" 2>/dev/null || wc -c < \"\$f\""
+    }
+
+    private fun headerExpression(source: CacheSource): String = if (source.probeHeader) {
+        "head -c 32 \"\$f\" | od -An -v -tx1 | tr -d ' \\n'"
+    } else {
+        "printf '%s' '-'"
+    }
+
+    private fun thumbExpression(source: CacheSource): String = if (source.hasJpegThumbnail) {
+        "\$([ -f \"\${f%.mp4}.jpg\" ] && echo 1 || echo 0)"
+    } else {
+        "0"
+    }
+
     /**
-     * 递归列出子目录中的文件。Android 的 toybox find 没有 `-printf`，
-     * 因此用 `find | while read` 配合 stat 输出；扫描行数设上限，避免超大目录把 stdout 撑爆。
+     * 递归源的一级子目录，带修改时间：`mtime 路径` 每行一条。
+     *
+     * `image2` 这类目录有一级 256 个、二级上万个，整棵树 `find` 一次要几十秒，
+     * 因此改成按一级子目录分页扫描；一级目录按 mtime 倒序，让最近用过的排前面。
      */
-    private fun recursiveListSourceCommand(hash: String, source: CacheSource): String {
+    fun listSourceSubDirsCommand(hash: String, source: CacheSource): String {
+        require(source.recursive) { "Flat source has no sub dirs: ${source.id}" }
         val dir = shellQuote(sourceDir(hash, source))
-        val names = source.findNames.joinToString(" -o ") { "-name ${shellQuote(it)}" }
-        val nameFilter = if (names.isEmpty()) "" else " \\( $names \\)"
         return listOf(
             "D=$dir",
             "[ -d \"\$D\" ] || exit 0",
-            "find \"\$D\" -maxdepth ${source.maxDepth} -type f$nameFilter 2>/dev/null" +
-                " | head -n $MAX_RECURSIVE_SCAN_LINES" +
-                " | while IFS= read -r f; do",
-            "  rel=\${f#\"\$D\"/}",
-            "  st=\$(stat -c '%s %Y' \"\$f\" 2>/dev/null) || st='0 0'",
-            "  set -- \$st",
-            "  printf '%s\\t%s\\t%s\\t-\\t%s\\t0\\n' \"\${rel##*/}\" \"\$1\" \"\$2\" \"\$rel\"",
+            "stat -c '%Y %n' \"\$D\"/*/ 2>/dev/null"
+        ).joinToString("\n")
+    }
+
+    /** 兜底方案：拿不到 mtime 时（stat 不支持 %n）只列目录名。 */
+    fun listSourceSubDirNamesCommand(hash: String, source: CacheSource): String {
+        require(source.recursive) { "Flat source has no sub dirs: ${source.id}" }
+        val dir = shellQuote(sourceDir(hash, source))
+        return listOf(
+            "D=$dir",
+            "[ -d \"\$D\" ] || exit 0",
+            "ls -1 \"\$D\" 2>/dev/null"
+        ).joinToString("\n")
+    }
+
+    /**
+     * 递归源的「一页」：只扫一个一级子目录。
+     *
+     * 单目录几十个文件，`find | xargs stat` 一次就完，耗时几十毫秒；整棵树拆成
+     * 几百次这样的调用，由界面滚到底部时逐页触发，用户不必等一次全量扫描。
+     */
+    fun listSourceDirPageCommand(
+        hash: String,
+        source: CacheSource,
+        dirName: String
+    ): String {
+        require(source.recursive) { "Flat source cannot be paged: ${source.id}" }
+        require(SourceRegistry.isSafeSegment(dirName)) { "Invalid dir name: $dirName" }
+        val base = shellQuote(sourceDir(hash, source))
+        val pageDir = shellQuote("${sourceDir(hash, source)}/$dirName")
+        val names = source.findNames.joinToString(" -o ") { "-name ${shellQuote(it)}" }
+        val nameFilter = if (names.isEmpty()) "" else " \\( $names \\)"
+        val depth = (source.maxDepth - 1).coerceAtLeast(1)
+        return listOf(
+            "D=$base",
+            "P=$pageDir",
+            "[ -d \"\$P\" ] || exit 0",
+            "find \"\$P\" -maxdepth $depth -type f$nameFilter 2>/dev/null" +
+                " | head -n $MAX_PAGE_SCAN_LINES" +
+                " | tr '\\n' '\\0'" +
+                " | xargs -0 -n $STAT_BATCH_SIZE stat -c '%s %Y %n' 2>/dev/null" +
+                // 注意用默认 IFS：写成 `IFS= read` 会把分隔符置空，read 就不拆字段了，
+                // 整行全落进 $sz，导致后面的列全部错位。
+                " | while read -r sz mt path; do",
+            "  rel=\${path#\"\$D\"/}",
+            "  printf '%s\\t%s\\t%s\\t-\\t%s\\t0\\n' \"\${rel##*/}\" \"\$sz\" \"\$mt\" \"\$rel\"",
             "done"
         ).joinToString("\n")
     }

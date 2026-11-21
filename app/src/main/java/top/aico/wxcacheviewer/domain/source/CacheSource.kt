@@ -29,6 +29,7 @@ const val RECURSIVE_LIST_TIMEOUT_MS = 30_000L
  * @param globs 扁平源的文件名通配符，如 `*`、`*.mp4`、`*_gif`
  * @param findNames 递归源的 `find -name` 模式，如 `th_*`
  * @param probeHeader 是否读取文件头 32 字节用于识别类型；关闭时按文件名推断
+ * @param pageSize 每页条数。扁平源按文件名倒序切片，递归源一个一级子目录算一页
  */
 data class CacheSource(
     val id: String,
@@ -47,5 +48,6 @@ data class CacheSource(
     val hasJpegThumbnail: Boolean = false,
     val typeHint: (String) -> FileType? = { null },
     val allowDelete: Boolean = true,
+    val pageSize: Int = 60,
     val listTimeoutMs: Long = DEFAULT_LIST_TIMEOUT_MS
 )

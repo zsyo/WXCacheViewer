@@ -68,6 +68,7 @@ fun AppRoot(
                 onSwitchAccount = { onSelectedAccountChanged(it) },
                 onSaveRemark = accountViewModel::saveRemark,
                 onRefresh = { galleryViewModel.refresh(selectedAccountHash) },
+                onLoadMore = { galleryViewModel.loadMore(selectedAccountHash) },
                 onStartSelection = { galleryViewModel.startSelection(it.key) },
                 onToggleSelection = { galleryViewModel.toggleSelection(it.key) },
                 onToggleSelectAll = galleryViewModel::toggleSelectAll,
