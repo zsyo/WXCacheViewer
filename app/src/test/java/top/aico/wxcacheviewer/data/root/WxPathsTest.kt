@@ -151,6 +151,17 @@ class WxPathsTest {
     }
 
     @Test
+    fun chatFilePageCommandMatchesEveryNameWithoutHeaderProbe() {
+        val page = WxPaths.listSourcePageCommand(hash, SourceRegistry.CHAT_FILE, 0, 40)
+        assertTrue(page.contains("'${WxPaths.MICROMSG_ROOT}/$hash/attachment'"))
+        // 星号通配所有文件名（含中文与空格），不做类型过滤
+        assertTrue(page.contains("case \"\$n\" in *) ;; *) continue ;; esac"))
+        // docx/xlsx/pptx 与 zip 的魔数完全相同，只看文件头会全部认成压缩包
+        assertFalse(page.contains("head -c 32"))
+        assertTrue(page.contains("-gt 40 ]"))
+    }
+
+    @Test
     fun flatSourcePageCommandKeepsThumbnailProbe() {
         val page = WxPaths.listSourcePageCommand(hash, SourceRegistry.CHAT_VIDEO, 0, 60)
         assertTrue(page.contains("\${f%.mp4}.jpg"))

@@ -41,11 +41,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -56,6 +56,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -71,24 +72,28 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.data.image.CoilImageLoaders
 import top.aico.wxcacheviewer.data.media.MediaPreparer
 import top.aico.wxcacheviewer.data.repository.GridMode
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
 import top.aico.wxcacheviewer.data.thumbnail.ThumbnailLoader
+import top.aico.wxcacheviewer.domain.ChatFileTypes
 import top.aico.wxcacheviewer.domain.model.Account
 import top.aico.wxcacheviewer.domain.model.CacheFile
 import top.aico.wxcacheviewer.domain.model.FileType
 import top.aico.wxcacheviewer.domain.model.SortDirection
 import top.aico.wxcacheviewer.domain.model.SortField
 import top.aico.wxcacheviewer.domain.model.SortOption
+import top.aico.wxcacheviewer.domain.model.isImage
 import top.aico.wxcacheviewer.domain.source.SourceTab
 import top.aico.wxcacheviewer.ui.account.AccountSwitchDialog
 import top.aico.wxcacheviewer.ui.common.ErrorView
 import top.aico.wxcacheviewer.ui.common.LoadingView
 import top.aico.wxcacheviewer.ui.common.formatFileSize
 import top.aico.wxcacheviewer.ui.common.formatModifiedAt
+import top.aico.wxcacheviewer.ui.common.openFileWith
 import top.aico.wxcacheviewer.ui.common.shortHash
 import top.aico.wxcacheviewer.ui.player.PlayerScreen
 import top.aico.wxcacheviewer.ui.viewer.ImageViewerScreen
@@ -141,6 +146,8 @@ fun GalleryScreen(
     var showDeleteConfirm by remember { mutableStateOf(false) }
     var playingFile by remember { mutableStateOf<CacheFile?>(null) }
     var previewKey by remember { mutableStateOf<String?>(null) }
+    var openingKey by remember { mutableStateOf<String?>(null) }
+    val openScope = rememberCoroutineScope()
 
     val gridState = rememberLazyGridState()
     LaunchedEffect(state.resetScrollToken) {
@@ -171,6 +178,22 @@ fun GalleryScreen(
         if (notice != null) {
             snackbarHostState.showSnackbar(notice)
             onNoticeShown()
+        }
+    }
+
+    // 文档类缓存要先由 root 复制到应用私有目录，再经 FileProvider 交给系统「打开方式」
+    val openFile: (CacheFile) -> Unit = { file ->
+        if (openingKey == null) {
+            openingKey = file.key
+            openScope.launch {
+                val prepared = mediaPreparer.prepare(file)
+                openingKey = null
+                if (prepared == null || !openFileWith(context, prepared, file)) {
+                    snackbarHostState.showSnackbar(
+                        context.getString(R.string.file_open_failed, file.name)
+                    )
+                }
+            }
         }
     }
 
@@ -218,18 +241,21 @@ fun GalleryScreen(
                         )
                     }
 
-                    val isListView = state.gridMode == GridMode.ONE
-                    val nextMode = if (isListView) GridMode.TWO else GridMode.ONE
-                    IconButton(onClick = { onSetGridMode(nextMode) }) {
-                        Icon(
-                            painter = painterResource(
-                                id = if (isListView) R.drawable.ic_view_list else R.drawable.ic_view_grid
-                            ),
-                            contentDescription = stringResource(
-                                id = if (isListView) R.string.view_mode_list else R.string.view_mode_grid
-                            ),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    // 文件页固定单列列表，切换网格没有意义
+                    if (!state.tab.listOnly) {
+                        val isListView = state.gridMode == GridMode.ONE
+                        val nextMode = if (isListView) GridMode.TWO else GridMode.ONE
+                        IconButton(onClick = { onSetGridMode(nextMode) }) {
+                            Icon(
+                                painter = painterResource(
+                                    id = if (isListView) R.drawable.ic_view_list else R.drawable.ic_view_grid
+                                ),
+                                contentDescription = stringResource(
+                                    id = if (isListView) R.string.view_mode_list else R.string.view_mode_grid
+                                ),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             )
@@ -263,7 +289,9 @@ fun GalleryScreen(
                     )
 
                     else -> LazyVerticalGrid(
-                        columns = GridCells.Fixed(if (state.gridMode == GridMode.TWO) 2 else 1),
+                        columns = GridCells.Fixed(
+                            if (state.tab.listOnly || state.gridMode == GridMode.ONE) 1 else 2
+                        ),
                         state = gridState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(
@@ -277,27 +305,46 @@ fun GalleryScreen(
                     ) {
                         items(items = state.files, key = { it.key }) { file ->
                             val selected = file.key in state.selectedKeys
-                            CacheFileTile(
-                                file = file,
-                                thumbnailLoader = thumbnailLoader,
-                                preparer = mediaPreparer,
-                                selectionMode = state.selectionMode,
-                                selected = selected,
-                                onClick = {
-                                    when {
-                                        state.selectionMode -> onToggleSelection(file)
-                                        file.type == FileType.MP4 -> playingFile = file
-                                        else -> previewKey = file.key
-                                    }
-                                },
-                                onLongClick = {
-                                    if (state.selectionMode) {
-                                        onToggleSelection(file)
-                                    } else {
-                                        onStartSelection(file)
-                                    }
+                            val longClick: () -> Unit = {
+                                if (state.selectionMode) {
+                                    onToggleSelection(file)
+                                } else {
+                                    onStartSelection(file)
                                 }
-                            )
+                            }
+                            if (state.tab.listOnly) {
+                                FileListTile(
+                                    file = file,
+                                    selectionMode = state.selectionMode,
+                                    selected = selected,
+                                    opening = openingKey == file.key,
+                                    onClick = {
+                                        when {
+                                            state.selectionMode -> onToggleSelection(file)
+                                            file.type == FileType.MP4 -> playingFile = file
+                                            file.type.isImage -> previewKey = file.key
+                                            else -> openFile(file)
+                                        }
+                                    },
+                                    onLongClick = longClick
+                                )
+                            } else {
+                                CacheFileTile(
+                                    file = file,
+                                    thumbnailLoader = thumbnailLoader,
+                                    preparer = mediaPreparer,
+                                    selectionMode = state.selectionMode,
+                                    selected = selected,
+                                    onClick = {
+                                        when {
+                                            state.selectionMode -> onToggleSelection(file)
+                                            file.type == FileType.MP4 -> playingFile = file
+                                            else -> previewKey = file.key
+                                        }
+                                    },
+                                    onLongClick = longClick
+                                )
+                            }
                         }
                         if (state.hasMore) {
                             item(span = { GridItemSpan(maxLineSpan) }) {
@@ -335,7 +382,8 @@ fun GalleryScreen(
         PlayerScreen(file = playing, onClose = { playingFile = null })
     }
 
-    val previewFiles = state.files.filter { it.type != FileType.MP4 }
+    // 图片预览只翻图片；文件页里的文档、压缩包走系统「打开方式」
+    val previewFiles = state.files.filter { it.type.isImage }
     previewKey?.let { key ->
         if (previewFiles.isNotEmpty()) {
             ImageViewerScreen(
@@ -762,6 +810,85 @@ private fun CacheFileTile(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FileListTile(
+    file: CacheFile,
+    selectionMode: Boolean,
+    selected: Boolean,
+    opening: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(12.dp)
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (selected) {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape)
+                } else {
+                    Modifier
+                }
+            ),
+        shape = shape,
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.secondaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                if (opening) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text(
+                        text = ChatFileTypes.badge(file.name, file.type),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        maxLines = 1
+                    )
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = file.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val modifiedLabel = formatModifiedAt(file.modifiedAt)
+                Text(
+                    text = buildString {
+                        append(formatFileSize(file.size))
+                        if (modifiedLabel.isNotEmpty()) {
+                            append(" / ")
+                            append(modifiedLabel)
+                        }
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (selectionMode) {
+                SelectionBadge(selected = selected)
+            }
+        }
+    }
+}
+
 @Composable
 private fun SelectionBadge(
     selected: Boolean,
@@ -788,13 +915,18 @@ private fun SelectionBadge(
 }
 
 /** 顶部缓存类型切换；多选时禁用，避免切换后选中状态落到别的列表上。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun GalleryTabs(
     selected: SourceTab,
     enabled: Boolean,
     onSelect: (SourceTab) -> Unit
 ) {
-    TabRow(selectedTabIndex = SourceTab.entries.indexOf(selected)) {
+    // 五个类型挤在固定宽度里会把「聊天视频」截断，改成按内容宽度排列、可横向滚动
+    ScrollableTabRow(
+        selectedTabIndex = SourceTab.entries.indexOf(selected),
+        edgePadding = 0.dp
+    ) {
         SourceTab.entries.forEach { tab ->
             Tab(
                 selected = tab == selected,

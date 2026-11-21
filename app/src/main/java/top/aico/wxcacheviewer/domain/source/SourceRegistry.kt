@@ -1,5 +1,6 @@
 package top.aico.wxcacheviewer.domain.source
 
+import top.aico.wxcacheviewer.domain.ChatFileTypes
 import top.aico.wxcacheviewer.domain.model.FileType
 
 /**
@@ -12,6 +13,9 @@ object SourceRegistry {
     private val EMOJI_NAME = Regex("^[0-9a-f]{32}_(?:gif|cover|thumb)$")
     private val CHAT_IMAGE_PATH = Regex("^(?:[0-9a-f]{2}/){1,3}th_[0-9a-f]{32}$")
     private val SNS_PATH = Regex("^(?:[0-9a-f]{1,2}/){1,3}(?:snst|snsu)_[0-9]+$")
+
+    /** 聊天文件名：中文、空格、括号都合法，只排除路径分隔符与控制字符。 */
+    private val CHAT_FILE_NAME = Regex("^[^/\\\\\\u0000-\\u001F]{1,192}$")
 
     /** 视频号视频：文件名无扩展名，靠文件头判断类型。 */
     val FINDER_VIDEO = CacheSource(
@@ -96,7 +100,27 @@ object SourceRegistry {
         listTimeoutMs = RECURSIVE_LIST_TIMEOUT_MS
     )
 
-    val all: List<CacheSource> = listOf(FINDER_VIDEO, CHAT_VIDEO, EMOJI, CHAT_IMAGE, SNS)
+    /**
+     * 聊天文件：聊天里收发的文档、压缩包、安装包等，落在 `MicroMsg/<hash>/attachment`。
+     * 文件名保留原始扩展名，因此按扩展名推断类型；这类文件是聊天记录的一部分，不提供删除。
+     */
+    val CHAT_FILE = CacheSource(
+        id = "chat_file",
+        title = "文件",
+        root = SourceRoot.MICROMSG,
+        relativeDir = "attachment",
+        relativePathRegex = CHAT_FILE_NAME,
+        exportTag = "wxfile",
+        exportKind = ExportKind.DOWNLOADS,
+        globs = listOf("*"),
+        typeHint = { ChatFileTypes.fromName(it) },
+        allowDelete = false,
+        pageSize = 40,
+        preserveFileName = true
+    )
+
+    val all: List<CacheSource> =
+        listOf(FINDER_VIDEO, CHAT_VIDEO, EMOJI, CHAT_IMAGE, SNS, CHAT_FILE)
 
     fun byId(id: String): CacheSource = all.firstOrNull { it.id == id } ?: FINDER_VIDEO
 

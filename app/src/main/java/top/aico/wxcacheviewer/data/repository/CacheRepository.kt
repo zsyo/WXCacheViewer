@@ -313,7 +313,8 @@ class CacheRepository(private val executor: RootCommandExecutor) {
      */
     suspend fun exportFile(file: CacheFile, destinationDir: File): File = withContext(Dispatchers.IO) {
         val source = SourceRegistry.byId(file.sourceId)
-        val destination = File(destinationDir, exportFileName(file))
+        // 聊天文件保留原名，重名时加序号，不能直接覆盖用户之前导出的同名文件
+        val destination = uniqueDestination(destinationDir, exportFileName(file))
         val result = executor.run(
             WxPaths.exportSourceFileCommand(
                 file.accountHash,
@@ -328,12 +329,32 @@ class CacheRepository(private val executor: RootCommandExecutor) {
         destination
     }
 
+    /** 目标目录已有同名文件时依次尝试 `名字(1).ext`、`名字(2).ext`。 */
+    private fun uniqueDestination(directory: File, name: String): File {
+        val first = File(directory, name)
+        if (!first.exists()) return first
+        val dot = name.lastIndexOf('.')
+        val base = if (dot > 0) name.substring(0, dot) else name
+        val suffix = if (dot > 0) name.substring(dot) else ""
+        var index = 1
+        while (true) {
+            val candidate = File(directory, "$base($index)$suffix")
+            if (!candidate.exists()) return candidate
+            index++
+        }
+    }
+
     /**
      * 导出名尽量可读：`<源前缀>_年月日_时分秒_<相对路径哈希 8 位>.<扩展名>`。
      * 末段用相对路径哈希，保证不同子目录下的同名文件不会互相覆盖。
+     * 聊天文件本身就有可读文件名，直接沿用（见 [CacheSource.preserveFileName]）。
      */
     private fun exportFileName(file: CacheFile): String {
         val source = SourceRegistry.byId(file.sourceId)
+        if (source.preserveFileName) {
+            val cleaned = file.name.replace('/', '_').replace('\\', '_').trim()
+            if (cleaned.isNotEmpty() && cleaned != "." && cleaned != "..") return cleaned
+        }
         val timeMillis = if (file.modifiedAt > 0L) file.modifiedAt * 1000 else System.currentTimeMillis()
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date(timeMillis))
         return "${source.exportTag}_${stamp}_${shortDigest(file.relativePath)}.${file.type.extension}"

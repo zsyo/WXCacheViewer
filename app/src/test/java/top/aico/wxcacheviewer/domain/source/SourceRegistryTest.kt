@@ -62,9 +62,31 @@ class SourceRegistryTest {
         assertTrue(SourceRegistry.EMOJI.allowDelete)
         assertFalse(SourceRegistry.CHAT_IMAGE.allowDelete)
         assertFalse(SourceRegistry.SNS.allowDelete)
+        // 聊天文件是聊天记录的一部分，删掉聊天里就没了
+        assertFalse(SourceRegistry.CHAT_FILE.allowDelete)
 
         assertTrue(SourceTab.FINDER.allowsDelete)
         assertFalse(SourceTab.IMAGES.allowsDelete)
+        assertFalse(SourceTab.FILES.allowsDelete)
+    }
+
+    @Test
+    fun chatFileAcceptsReadableNames() {
+        val source = SourceRegistry.CHAT_FILE
+        assertTrue(SourceRegistry.isValidRelativePath(source, "项目资料 归档.zip"))
+        assertTrue(
+            SourceRegistry.isValidRelativePath(
+                source,
+                "团队协作流程说明.pdf"
+            )
+        )
+        // 没有扩展名的文件也会列出，界面按「文件」展示
+        assertTrue(SourceRegistry.isValidRelativePath(source, "da_1700000000000"))
+        assertFalse(SourceRegistry.isValidRelativePath(source, "a/b.zip"))
+        assertFalse(SourceRegistry.isValidRelativePath(source, "../evil.zip"))
+        assertFalse(SourceRegistry.isValidRelativePath(source, ""))
+        // 制表符会破坏「六字段 tab 分隔」的列表协议
+        assertFalse(SourceRegistry.isValidRelativePath(source, "a\tb.zip"))
     }
 
     @Test

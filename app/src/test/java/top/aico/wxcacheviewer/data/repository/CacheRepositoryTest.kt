@@ -8,8 +8,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
 import top.aico.wxcacheviewer.data.root.ShellResult
+import top.aico.wxcacheviewer.domain.model.CacheFile
 import top.aico.wxcacheviewer.domain.model.FileType
 import top.aico.wxcacheviewer.domain.source.SourceRegistry
+import java.io.File
 
 class CacheRepositoryTest {
 
@@ -231,8 +233,7 @@ class CacheRepositoryTest {
     }
 
     @Test
-    fun fallsBackToDirNamesWhenStatLacksNamePlaceholder() = runBlocking {
-        val executor = RoutingExecutor { command ->
+    fun fallsBackToDirNamesWhenStatLacksNamePlaceholder() = runBlocking {        val executor = RoutingExecutor { command ->
             when {
                 // 模拟 stat 不支持 %n：一行都解析不出来
                 command.contains("stat -c '%Y %n'") -> ShellResult("", 0, "")
@@ -245,5 +246,54 @@ class CacheRepositoryTest {
 
         assertEquals(1, page.files.size)
         assertNull(page.error)
+    }
+
+    @Test
+    fun parsesChatFileTypeFromExtension() = runBlocking {
+        val stdout = listOf(
+            "项目资料 归档.zip\t4158664\t1795000010\t-\t项目资料 归档.zip\t0",
+            "团队协作流程说明.pdf\t1483595\t1795000011\t-\t团队协作流程说明.pdf\t0",
+            "示例文档.docx\t95232\t1795000012\t-\t示例文档.docx\t0",
+            "da_1700000000000\t5778613\t1795000013\t-\tda_1700000000000\t0"
+        ).joinToString("\n")
+        val files = CacheRepository(FakeExecutor(ShellResult(stdout, 0, "")))
+            .listFiles(hash, listOf(SourceRegistry.CHAT_FILE)).files
+
+        assertEquals(4, files.size)
+        // 页内按时间倒序：最新的是无扩展名的那个
+        assertEquals(FileType.UNKNOWN, files.first().type)
+        assertTrue(files.any { it.type == FileType.DOCX })
+        assertTrue(files.any { it.type == FileType.PDF })
+        assertTrue(files.any { it.type == FileType.ZIP })
+        // 空格与中文都要原样保留，不能被当成路径分隔或截断
+        assertTrue(files.any { it.name == "项目资料 归档.zip" })
+        assertEquals(
+            "chat_file:项目资料 归档.zip",
+            files.first { it.name == "项目资料 归档.zip" }.key
+        )
+    }
+
+    @Test
+    fun exportKeepsOriginalNameAndAvoidsOverwrite() = runBlocking {
+        val dir = File(System.getProperty("java.io.tmpdir"), "wxcache-export-${System.nanoTime()}")
+        dir.mkdirs()
+        // 目标目录已有同名文件时改成「名字(1).docx」，不能覆盖用户之前导出的
+        File(dir, "示例文档.docx").writeText("old")
+        val file = CacheFile(
+            accountHash = hash,
+            name = "示例文档.docx",
+            size = 95232,
+            modifiedAt = 1795000012,
+            type = FileType.DOCX,
+            relativePath = "示例文档.docx",
+            sourceId = "chat_file"
+        )
+        val executor = FakeExecutor(ShellResult("OK", 0, ""))
+        val exported = CacheRepository(executor).exportFile(file, dir)
+
+        assertEquals("示例文档(1).docx", exported.name)
+        assertTrue(executor.commands.single().contains("示例文档(1).docx"))
+        dir.deleteRecursively()
+        Unit
     }
 }

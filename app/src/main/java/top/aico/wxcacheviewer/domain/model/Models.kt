@@ -1,7 +1,12 @@
 package top.aico.wxcacheviewer.domain.model
 
 enum class FileType {
-    MP4, JPEG, PNG, GIF, WEBP, UNKNOWN
+    MP4, JPEG, PNG, GIF, WEBP,
+
+    /** 聊天文件（attachment）里收发的文档与安装包等。 */
+    ZIP, PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, APK, AUDIO,
+
+    UNKNOWN
 }
 
 /** 导出与媒体库扫描用的 MIME 类型。 */
@@ -12,6 +17,20 @@ val FileType.mime: String
         FileType.PNG -> "image/png"
         FileType.GIF -> "image/gif"
         FileType.WEBP -> "image/webp"
+        FileType.ZIP -> "application/zip"
+        FileType.PDF -> "application/pdf"
+        FileType.DOC -> "application/msword"
+        FileType.DOCX ->
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        FileType.XLS -> "application/vnd.ms-excel"
+        FileType.XLSX ->
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        FileType.PPT -> "application/vnd.ms-powerpoint"
+        FileType.PPTX ->
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        FileType.TXT -> "text/plain"
+        FileType.APK -> "application/vnd.android.package-archive"
+        FileType.AUDIO -> "audio/mpeg"
         FileType.UNKNOWN -> "application/octet-stream"
     }
 
@@ -23,8 +42,24 @@ val FileType.extension: String
         FileType.PNG -> "png"
         FileType.GIF -> "gif"
         FileType.WEBP -> "webp"
+        FileType.ZIP -> "zip"
+        FileType.PDF -> "pdf"
+        FileType.DOC -> "doc"
+        FileType.DOCX -> "docx"
+        FileType.XLS -> "xls"
+        FileType.XLSX -> "xlsx"
+        FileType.PPT -> "ppt"
+        FileType.PPTX -> "pptx"
+        FileType.TXT -> "txt"
+        FileType.APK -> "apk"
+        FileType.AUDIO -> "mp3"
         FileType.UNKNOWN -> "bin"
     }
+
+/** 能交给图片预览页的类型。 */
+val FileType.isImage: Boolean
+    get() = this == FileType.JPEG || this == FileType.PNG ||
+        this == FileType.GIF || this == FileType.WEBP
 
 data class Account(
     val hash: String,

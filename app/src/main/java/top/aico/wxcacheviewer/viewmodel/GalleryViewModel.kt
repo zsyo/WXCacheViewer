@@ -403,6 +403,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         val (publicDir, label) = when (source.exportKind) {
             ExportKind.MOVIES -> Environment.DIRECTORY_MOVIES to "Movies"
             ExportKind.PICTURES -> Environment.DIRECTORY_PICTURES to "Pictures"
+            ExportKind.DOWNLOADS -> Environment.DIRECTORY_DOWNLOADS to "Download"
         }
         val directory = File(
             Environment.getExternalStoragePublicDirectory(publicDir),

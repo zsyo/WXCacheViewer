@@ -68,8 +68,21 @@ class MediaPreparer(
 
     private fun targetFile(file: CacheFile): File {
         val dir = File(rootDir, file.sourceId).apply { mkdirs() }
-        val name = "${digest("${file.key}#${file.size}")}.${file.type.extension}"
+        val name = "${digest("${file.key}#${file.size}")}.${extensionOf(file)}"
         return File(dir, name)
+    }
+
+    /**
+     * 缓存本体多数没有扩展名，靠类型补；聊天文件自带扩展名，必须原样保留，
+     * 否则打开时系统按扩展名找应用会找不到（docx/xlsx 这类尤其明显）。
+     */
+    private fun extensionOf(file: CacheFile): String {
+        val dot = file.name.lastIndexOf('.')
+        if (dot in 1 until file.name.lastIndex) {
+            val candidate = file.name.substring(dot + 1).lowercase()
+            if (candidate.length <= 5 && candidate.all { it.isLetterOrDigit() }) return candidate
+        }
+        return file.type.extension
     }
 
     private fun digest(value: String): String =
