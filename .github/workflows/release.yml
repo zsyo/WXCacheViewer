@@ -108,29 +108,37 @@ jobs:
         run: |
           set -euo pipefail
           BT=$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)
-          APK=app/build/outputs/apk/release/app-release.apk
-          "$ANDROID_HOME/build-tools/$BT/apksigner" verify --print-certs "$APK"
-          # 原生库必须仍然按 16 KB 页对齐，避免 Android 16 上的兼容性弹窗
-          "$ANDROID_HOME/build-tools/$BT/zipalign" -c -P 16 4 "$APK"
+          # ABI 分包后每个 APK 都要校验：签名有效、原生库仍按 16 KB 页对齐
+          for apk in app/build/outputs/apk/release/app-*-release.apk; do
+            echo "== $(basename "$apk") =="
+            "$ANDROID_HOME/build-tools/$BT/apksigner" verify --print-certs "$apk"
+            "$ANDROID_HOME/build-tools/$BT/zipalign" -c -P 16 4 "$apk"
+          done
 
-      - name: Rename artifact
+      - name: Rename artifacts
         run: |
           set -euo pipefail
-          cp app/build/outputs/apk/release/app-release.apk "WXCacheViewer-${GITHUB_REF_NAME}.apk"
-          echo "APK=WXCacheViewer-${GITHUB_REF_NAME}.apk" >> "$GITHUB_ENV"
+          # AGP 产物名形如 app-arm64-v8a-release.apk，统一成 WXCacheViewer-<版本>-<ABI>.apk
+          for apk in app/build/outputs/apk/release/app-*-release.apk; do
+            name=$(basename "$apk" .apk)
+            abi=${name#app-}
+            abi=${abi%-release}
+            cp "$apk" "WXCacheViewer-${{ steps.version.outputs.name }}-${abi}.apk"
+          done
+          ls -lh WXCacheViewer-*.apk
 
-      - name: Upload artifact
+      - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
           name: apk
-          path: ${{ env.APK }}
+          path: WXCacheViewer-*.apk
           retention-days: 14
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v3
         with:
-          files: ${{ env.APK }}
+          files: WXCacheViewer-*.apk
           # tag message 在上、自动生成的变更列表在下；无 tag message 时只有后者
           body_path: ${{ steps.tagmsg.outputs.source == 'tag-message' && 'release-notes.md' || '' }}
           generate_release_notes: true

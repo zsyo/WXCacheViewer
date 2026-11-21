@@ -1,5 +1,6 @@
 import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import com.android.build.api.variant.FilterConfiguration.FilterType.ABI
 
 plugins {
     alias(libs.plugins.android.application)
@@ -60,6 +61,16 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    // 按 ABI 分包：每个 APK 只带一套原生库，体积更小，用户下载对应架构即可。
+    // 不生成 universal 包，避免分发时出现五个文件造成混淆。
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+            isUniversalApk = false
+        }
+    }
     // AGP 9 内置 Kotlin：编译选项移到顶层 kotlin DSL，不再是 android.kotlinOptions
     buildFeatures {
         compose = true
@@ -82,6 +93,25 @@ android {
 kotlin {
     compilerOptions {
         jvmTarget = JvmTarget.JVM_17
+    }
+}
+
+// 每个 ABI 分配独立的 versionCode 段（ABI 序号 * 10000 + 基础版本号），
+// 避免四个包 versionCode 相同导致应用商店/安装器互相判定为旧版本。
+val abiCodes = mapOf(
+    "armeabi-v7a" to 1,
+    "arm64-v8a" to 2,
+    "x86" to 3,
+    "x86_64" to 4,
+)
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            val abi = output.filters.find { it.filterType == ABI }?.identifier
+            abiCodes[abi]?.let { code ->
+                output.versionCode.set(code * 10000 + (output.versionCode.get() ?: 0))
+            }
+        }
     }
 }
 

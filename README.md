@@ -97,16 +97,28 @@ Android 16 及以上系统对应用数据目录做了更强的隔离，直接在
 - Android SDK Platform 35、Build-Tools 36.0.0（AGP 9 要求 Build-Tools 最低 36.0.0）
 
 ```bash
-# 调试包
+# 调试包（按 ABI 拆成多个）
 ./gradlew assembleDebug
-# 产物：app/build/outputs/apk/debug/app-debug.apk
+# 产物：app/build/outputs/apk/debug/app-<abi>-debug.apk
 
 # 单元测试与 lint
 ./gradlew testDebugUnitTest lintDebug
 
-# 发布包（开启 R8 混淆与资源压缩）
+# 发布包（按 ABI 拆成多个，开启 R8 混淆与资源压缩）
 ./gradlew assembleRelease
+# 产物：app/build/outputs/apk/release/app-<abi>-release.apk
 ```
+
+构建会产出四个 ABI 包，每个只含一套原生库（SILK 解码器与 LAME），体积比原先的全 ABI 单包小：
+
+| 文件后缀 | 适用设备 |
+| --- | --- |
+| `arm64-v8a` | 绝大多数 64 位 ARM 手机（推荐） |
+| `armeabi-v7a` | 较旧的 32 位 ARM 手机 |
+| `x86` | 32 位 x86 模拟器/设备 |
+| `x86_64` | 64 位 x86 模拟器/设备 |
+
+四个包的 `versionCode` 按 ABI 分段（如 `2xxxx` 为 arm64），互不冲突；GitHub Release 会把四个包一并作为附件发布，按设备架构下载即可。
 
 `gradle.properties` 中有一行 `org.gradle.java.home`，指向开发机上的 JDK 21 绝对路径。如果你本机路径不同，请改成自己的路径或直接删除该行并设置 `JAVA_HOME`。同理，`local.properties` 里的 `sdk.dir` 需要指向你自己的 SDK 位置（该文件已被 `.gitignore` 排除）。CI 会自动删掉 `org.gradle.java.home` 这一行，无需为 Linux runner 手动改仓库文件。
 
@@ -125,7 +137,7 @@ keyPassword=你的密码
 
 ## GitHub Actions 自动构建与发布
 
-推送 `v` 开头的 tag（如 `v0.1.0`）会触发 `.github/workflows/release.yml`：自动装 JDK 21 与 NDK 28.2.13676358 / CMake 3.22.1，跑单测与 lint，用密钥签名后产出 APK，校验签名与 16 KB 页对齐，最后把 APK 附到对应的 GitHub Release 上。也可在 Actions 页面手动触发来验证流水线，手动触发不发布 Release。
+推送 `v` 开头的 tag（如 `v0.1.0`）会触发 `.github/workflows/release.yml`：自动装 JDK 21 与 NDK 28.2.13676358 / CMake 3.22.1，跑单测与 lint，用密钥签名后产出四个 ABI 包，逐个校验签名与 16 KB 页对齐，最后把四个 APK 一并附到对应的 GitHub Release 上。也可在 Actions 页面手动触发来验证流水线，手动触发不发布 Release。
 
 首次接入按下面步骤做一次：
 
@@ -167,7 +179,7 @@ keyPassword=你的密码
    `versionName` 取 tag 去掉 `v` 后的部分（`v0.1.0` → `0.1.0`），`versionCode` 取 GitHub 的 run number，保证每次发版都递增。`KEYSTORE_B64` 在构建时解码到 runner 的临时目录，不会进入仓库或产物。
    建议用 annotated tag（`git tag -a v0.1.0 -m "版本说明"`）写发布说明：tag 的 message 会作为 Release 正文上半，下面再叠加 GitHub 按提交自动生成的变更列表；轻量 tag 没有 message 时只有自动生成部分。tag 版本号含 `-` 预发布段（如 `v0.2.0-beta.1`）时 Release 会标记为预发布。
 
-5. **取产物**。每个 tag 的 APK 在两个地方：Actions 运行页 Artifacts（保留 14 天）和该 tag 对应的 GitHub Release 附件（长期保留）。`apksigner verify` 与 `zipalign -c -P 16` 在上传前已校验通过。
+5. **取产物**。每个 tag 的四个 ABI 包在两个地方：Actions 运行页 Artifacts（保留 14 天）和该 tag 对应的 GitHub Release 附件（长期保留）。每个包在上传前都已通过 `apksigner verify` 与 `zipalign -c -P 16` 校验。
 
 注意：release 签名与开发时装的 debug 包签名不同，覆盖安装会报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，需先卸载旧包（会清掉应用私有数据，不影响微信缓存本身）。另外按 GPL-3.0，发布二进制时仓库需保持可访问以提供对应源码。
 
