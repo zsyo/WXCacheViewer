@@ -59,6 +59,9 @@ import top.aico.wxcacheviewer.viewmodel.SettingsUiState
 /** 仓库地址同时用于「开源仓库」与「版本」两项的跳转。 */
 private const val REPOSITORY_URL = "https://github.com/zsyo/WXCacheViewer"
 
+/** 开发者主页，点「开发者」一行时打开。 */
+private const val DEVELOPER_URL = "https://github.com/zsyo"
+
 private enum class AboutDialog { LICENSE, PRIVACY, DISCLAIMER }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -78,6 +81,15 @@ fun SettingsScreen(
     var dialog by remember { mutableStateOf<AboutDialog?>(null) }
     var showClearConfirm by remember { mutableStateOf(false) }
     val versionName = remember { versionName(context) }
+
+    // 关于页的链接一律走系统浏览器，没有能处理的应用时给提示
+    val openLink: (String) -> Unit = { url ->
+        if (!openUrl(context, url)) {
+            scope.launch {
+                snackbarHostState.showSnackbar(context.getString(R.string.settings_link_failed))
+            }
+        }
+    }
 
     val picker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -158,15 +170,8 @@ fun SettingsScreen(
             SectionTitle(stringResource(id = R.string.settings_section_about))
             AboutCard(
                 versionName = versionName,
-                onOpenRepository = {
-                    if (!openUrl(context, REPOSITORY_URL)) {
-                        scope.launch {
-                            snackbarHostState.showSnackbar(
-                                context.getString(R.string.settings_about_repo_failed)
-                            )
-                        }
-                    }
-                },
+                onOpenRepository = { openLink(REPOSITORY_URL) },
+                onOpenDeveloper = { openLink(DEVELOPER_URL) },
                 onShowLicense = { dialog = AboutDialog.LICENSE },
                 onShowPrivacy = { dialog = AboutDialog.PRIVACY },
                 onShowDisclaimer = { dialog = AboutDialog.DISCLAIMER }
@@ -358,6 +363,7 @@ private fun CacheCard(
 private fun AboutCard(
     versionName: String,
     onOpenRepository: () -> Unit,
+    onOpenDeveloper: () -> Unit,
     onShowLicense: () -> Unit,
     onShowPrivacy: () -> Unit,
     onShowDisclaimer: () -> Unit
@@ -398,7 +404,8 @@ private fun AboutCard(
             )
             AboutRow(
                 title = stringResource(id = R.string.settings_about_developer),
-                value = stringResource(id = R.string.settings_about_developer_value)
+                value = stringResource(id = R.string.settings_about_developer_value),
+                onClick = onOpenDeveloper
             )
             AboutRow(
                 title = stringResource(id = R.string.settings_about_license),
