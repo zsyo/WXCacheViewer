@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -61,6 +62,7 @@ import top.aico.wxcacheviewer.ui.account.AccountSwitchDialog
 import top.aico.wxcacheviewer.ui.common.ErrorView
 import top.aico.wxcacheviewer.ui.common.LoadingView
 import top.aico.wxcacheviewer.ui.common.formatFileSize
+import top.aico.wxcacheviewer.ui.common.formatModifiedAt
 import top.aico.wxcacheviewer.ui.common.shortHash
 import top.aico.wxcacheviewer.viewmodel.GalleryUiState
 
@@ -87,6 +89,13 @@ fun GalleryScreen(
 
     var showSwitchDialog by remember { mutableStateOf(false) }
     var showSortMenu by remember { mutableStateOf(false) }
+
+    val gridState = rememberLazyGridState()
+    LaunchedEffect(state.files) {
+        if (state.files.isNotEmpty()) {
+            gridState.scrollToItem(0)
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -148,6 +157,7 @@ fun GalleryScreen(
 
             else -> LazyVerticalGrid(
                 columns = GridCells.Fixed(if (state.gridMode == GridMode.TWO) 2 else 1),
+                state = gridState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
@@ -319,8 +329,17 @@ private fun CacheFileTile(file: CacheFile, thumbnailLoader: ThumbnailLoader) {
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                val modifiedLabel = formatModifiedAt(file.modifiedAt)
                 Text(
-                    text = "${file.type.name} / ${formatFileSize(file.size)}",
+                    text = buildString {
+                        append(file.type.name)
+                        append(" / ")
+                        append(formatFileSize(file.size))
+                        if (modifiedLabel.isNotEmpty()) {
+                            append(" / ")
+                            append(modifiedLabel)
+                        }
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
