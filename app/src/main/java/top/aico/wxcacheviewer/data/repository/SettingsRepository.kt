@@ -1,8 +1,10 @@
 package top.aico.wxcacheviewer.data.repository
 
 import android.content.Context
+import android.os.Environment
 import top.aico.wxcacheviewer.domain.model.SortDirection
 import top.aico.wxcacheviewer.domain.model.SortField
+import java.io.File
 
 enum class GridMode { TWO, ONE }
 
@@ -55,6 +57,35 @@ class SettingsRepository(context: Context) {
             preferences.edit().putFloat(KEY_PLAYBACK_VOLUME, value.coerceIn(0f, 1f)).apply()
         }
 
+    /**
+     * 导出根目录的绝对路径，空串表示还没选过。
+     *
+     * 导出时在这个目录下按类型再建子目录（视频 / 图片 / 语音 / 文件），
+     * 不再散落到 Music、Movies、Download 几个系统目录里。
+     */
+    var exportRootPath: String
+        get() = preferences.getString(KEY_EXPORT_ROOT_PATH, "").orEmpty()
+        set(value) {
+            preferences.edit().putString(KEY_EXPORT_ROOT_PATH, value).apply()
+        }
+
+    /** 保存目录选择的 SAF 授权 URI，换设备或清数据后失效时用来提示重新选择。 */
+    var exportRootUri: String
+        get() = preferences.getString(KEY_EXPORT_ROOT_URI, "").orEmpty()
+        set(value) {
+            preferences.edit().putString(KEY_EXPORT_ROOT_URI, value).apply()
+        }
+
+    /** 实际使用的导出根目录，未设置时落到 Download/WXCacheViewer。 */
+    val exportRootDir: File
+        get() = File(exportRootPath.ifBlank { defaultExportRootPath() })
+
+    @Suppress("DEPRECATION")
+    fun defaultExportRootPath(): String = File(
+        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+        DEFAULT_EXPORT_DIR_NAME
+    ).absolutePath
+
     private companion object {
         const val KEY_SELECTED_ACCOUNT = "selected_account_hash"
         const val KEY_GRID_MODE = "grid_mode"
@@ -62,5 +93,8 @@ class SettingsRepository(context: Context) {
         const val KEY_SORT_DIRECTION = "sort_direction"
         const val KEY_REMARK = "remark_"
         const val KEY_PLAYBACK_VOLUME = "playback_volume"
+        const val KEY_EXPORT_ROOT_PATH = "export_root_path"
+        const val KEY_EXPORT_ROOT_URI = "export_root_uri"
+        const val DEFAULT_EXPORT_DIR_NAME = "WXCacheViewer"
     }
 }

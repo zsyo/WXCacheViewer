@@ -143,7 +143,8 @@ fun GalleryScreen(
     onDeleteSelected: () -> Unit,
     onNoticeShown: () -> Unit,
     onSaveOne: (CacheFile, (Boolean, String) -> Unit) -> Unit,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     val context = LocalContext.current
     val thumbnailLoader = remember { ThumbnailLoader(context, RootCommandExecutor()) }
@@ -347,6 +348,14 @@ fun GalleryScreen(
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                    }
+
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_settings),
+                            contentDescription = stringResource(id = R.string.settings),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
             )

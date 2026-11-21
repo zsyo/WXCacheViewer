@@ -2,7 +2,6 @@ package top.aico.wxcacheviewer.viewmodel
 
 import android.app.Application
 import android.media.MediaScannerConnection
-import android.os.Environment
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,6 +17,7 @@ import top.aico.wxcacheviewer.data.repository.PageCursor
 import top.aico.wxcacheviewer.data.repository.SettingsRepository
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
 import top.aico.wxcacheviewer.domain.CacheFileSorter
+import top.aico.wxcacheviewer.domain.ExportCategory
 import top.aico.wxcacheviewer.domain.model.CacheFile
 import top.aico.wxcacheviewer.domain.model.SortOption
 import top.aico.wxcacheviewer.domain.model.mime
@@ -416,23 +416,21 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         else -> "audio/mpeg"
     }
 
-    @Suppress("DEPRECATION")
+    /**
+     * 导出目录：在设置页选定的根目录下按类型建子目录。
+     * 没选过时根目录是 Download/WXCacheViewer，不再分散到 Music、Movies 等系统目录。
+     */
     private fun exportTarget(file: CacheFile): ExportTarget {
-        val source = SourceRegistry.byId(file.sourceId)
-        val (publicDir, label) = when (source.exportKind) {
-            ExportKind.MOVIES -> Environment.DIRECTORY_MOVIES to "Movies"
-            ExportKind.PICTURES -> Environment.DIRECTORY_PICTURES to "Pictures"
-            ExportKind.DOWNLOADS -> Environment.DIRECTORY_DOWNLOADS to "Download"
-            ExportKind.MUSIC -> Environment.DIRECTORY_MUSIC to "Music"
+        val category = when (SourceRegistry.byId(file.sourceId).exportKind) {
+            ExportKind.MOVIES -> ExportCategory.VIDEO
+            ExportKind.PICTURES -> ExportCategory.IMAGE
+            ExportKind.MUSIC -> ExportCategory.VOICE
+            ExportKind.DOWNLOADS -> ExportCategory.FILE
         }
-        val directory = File(
-            Environment.getExternalStoragePublicDirectory(publicDir),
-            EXPORT_DIR_NAME
+        val root = settings.exportRootDir
+        return ExportTarget(
+            directory = File(root, category.directoryName),
+            label = "${root.name}/${category.directoryName}"
         )
-        return ExportTarget(directory, "$label/$EXPORT_DIR_NAME")
-    }
-
-    private companion object {
-        const val EXPORT_DIR_NAME = "WXCacheViewer"
     }
 }
