@@ -93,8 +93,8 @@ Android 16 及以上系统对应用数据目录做了更强的隔离，直接在
 
 环境：
 
-- JDK 17
-- Android SDK Platform 35、Build-Tools 35.0.0
+- JDK 21（运行 Gradle；源码编译目标仍是 Java 17）
+- Android SDK Platform 35、Build-Tools 36.0.0（AGP 9 要求 Build-Tools 最低 36.0.0）
 
 ```bash
 # 调试包
@@ -108,7 +108,7 @@ Android 16 及以上系统对应用数据目录做了更强的隔离，直接在
 ./gradlew assembleRelease
 ```
 
-`gradle.properties` 中有一行 `org.gradle.java.home`，指向开发机上的 JDK 17 绝对路径。如果你本机路径不同，请改成自己的路径或直接删除该行并设置 `JAVA_HOME`。同理，`local.properties` 里的 `sdk.dir` 需要指向你自己的 SDK 位置（该文件已被 `.gitignore` 排除）。CI 会自动删掉 `org.gradle.java.home` 这一行，无需为 Linux runner 手动改仓库文件。
+`gradle.properties` 中有一行 `org.gradle.java.home`，指向开发机上的 JDK 21 绝对路径。如果你本机路径不同，请改成自己的路径或直接删除该行并设置 `JAVA_HOME`。同理，`local.properties` 里的 `sdk.dir` 需要指向你自己的 SDK 位置（该文件已被 `.gitignore` 排除）。CI 会自动删掉 `org.gradle.java.home` 这一行，无需为 Linux runner 手动改仓库文件。
 
 本地要打**签名**发布包，在根目录建一个 `keystore.properties`（已被 `.gitignore` 排除，不会进仓库）：
 
@@ -125,7 +125,7 @@ keyPassword=你的密码
 
 ## GitHub Actions 自动构建与发布
 
-推送 `v` 开头的 tag（如 `v0.1.0`）会触发 `.github/workflows/release.yml`：自动装 JDK 17 与 NDK 28.2.13676358 / CMake 3.22.1，跑单测与 lint，用密钥签名后产出 APK，校验签名与 16 KB 页对齐，最后把 APK 附到对应的 GitHub Release 上。也可在 Actions 页面手动触发来验证流水线，手动触发不发布 Release。
+推送 `v` 开头的 tag（如 `v0.1.0`）会触发 `.github/workflows/release.yml`：自动装 JDK 21 与 NDK 28.2.13676358 / CMake 3.22.1，跑单测与 lint，用密钥签名后产出 APK，校验签名与 16 KB 页对齐，最后把 APK 附到对应的 GitHub Release 上。也可在 Actions 页面手动触发来验证流水线，手动触发不发布 Release。
 
 首次接入按下面步骤做一次：
 
@@ -241,7 +241,7 @@ art/                     应用图标的原始设计稿（PNG），据此生成�
 spec/                    每个功能的规格文档
 ```
 
-技术栈：Kotlin 1.9.24、Jetpack Compose（BOM 2024.12.01）、Material 3、Media3 ExoPlayer 1.5.1、Coil 2.7.0、SILK v3 定点解码器与 LAME（源码随模块编译）、AGP 8.10.1、Gradle 8.11.1。
+技术栈：Kotlin 2.4.21（AGP 9 内置 Kotlin 编译）、Jetpack Compose（BOM 2024.12.01）、Material 3、Media3 ExoPlayer 1.5.1、Coil 2.7.0、SILK v3 定点解码器与 LAME（源码随模块编译）、AGP 9.5.0、Gradle 9.9.2。
 
 ## 已知限制
 

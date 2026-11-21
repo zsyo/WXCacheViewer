@@ -1,8 +1,9 @@
 import java.util.Properties
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
 }
 
 // 签名材料：CI 走环境变量，本地走根目录的 keystore.properties。
@@ -59,9 +60,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // AGP 9 内置 Kotlin：编译选项移到顶层 kotlin DSL，不再是 android.kotlinOptions
     buildFeatures {
         compose = true
     }
@@ -69,15 +68,20 @@ android {
         // 单测里 AppLog 会调用 android.util.Log，未 mock 时让它返回默认值而不是抛异常
         unitTests.isReturnDefaultValues = true
     }
-    composeOptions {
-        kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
-    }
     externalNativeBuild {
         cmake {
             // SILK 解码器与 LAME 的源码构建脚本
             path = file("src/main/cpp/CMakeLists.txt")
             version = libs.versions.cmake.get()
         }
+    }
+}
+
+// 内置 Kotlin 的 jvmTarget 默认跟随 compileOptions.targetCompatibility，这里显式固定为 17，
+// 让 ART 的脱糖负担保持与升级前一致（与运行 Gradle 的 JDK 21 无关）。
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
     }
 }
 

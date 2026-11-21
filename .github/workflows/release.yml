@@ -22,24 +22,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       # NDK 与 CMake 的版本写死在 gradle/libs.versions.toml，runner 预装的未必是这两个。
-      # 该入参按空格切分，必须写成一行，换行会被当成包名的一部分
+      # AGP 9 要求 Build Tools 最低 36.0.0。该入参按空格切分，必须写成一行，换行会被当成包名的一部分
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0 ndk;28.2.13676358 cmake;3.22.1'
+          packages: 'platform-tools platforms;android-35 build-tools;36.0.0 ndk;28.2.13676358 cmake;3.22.1'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      # gradle.properties 里有一条指向开发机 Windows JDK 的 org.gradle.java.home，
-      # runner 上没有该路径会直接报错，这里删掉，改用 setup-java 装好的 JDK 17
+      # gradle.properties 里有一条指向开发机 JDK 的 org.gradle.java.home，
+      # runner 上没有该路径会直接报错，这里删掉，改用 setup-java 装好的 JDK 21
       - name: Drop machine-specific JDK path
         run: sed -i '/^org\.gradle\.java\.home/d' gradle.properties
 
