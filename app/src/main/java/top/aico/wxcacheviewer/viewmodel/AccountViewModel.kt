@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import top.aico.wxcacheviewer.data.log.AppLog
 import top.aico.wxcacheviewer.data.repository.CacheRepository
 import top.aico.wxcacheviewer.data.repository.SettingsRepository
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
@@ -35,6 +36,7 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = null, diagnostics = null) }
             val root = repository.checkRoot()
+            AppLog.log("account", "rootState=$root")
             if (root is RootState.Unavailable) {
                 val diagnostics = RootDiagnostics.collect(getApplication(), executor)
                 _uiState.update {
@@ -44,6 +46,7 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
             }
             try {
                 val accounts = repository.discoverAccounts()
+                AppLog.log("account", "discovered=${accounts.size} ${accounts.map { it.hash to it.hasVideoCache }}")
                 val remarks = accounts.associate { it.hash to settings.getRemark(it.hash) }
                 _uiState.update {
                     it.copy(loading = false, rootState = root, accounts = accounts, remarks = remarks)

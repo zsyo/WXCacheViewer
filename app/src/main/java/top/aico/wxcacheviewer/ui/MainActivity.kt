@@ -8,11 +8,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import top.aico.wxcacheviewer.data.log.AppLog
 import top.aico.wxcacheviewer.data.repository.SettingsRepository
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        AppLog.init(this)
+        AppLog.log("app", "MainActivity.onCreate")
         val settings = SettingsRepository(this)
         setContent {
             MaterialTheme {
