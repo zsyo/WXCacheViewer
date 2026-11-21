@@ -22,15 +22,16 @@ object WxPaths {
         "for d in ${shellQuote(CACHE_ROOT)} ${shellQuote(IDENTITY_ROOT)}; do",
         "  [ -d \"\$d\" ] || continue",
         "  ls -1 \"\$d\" 2>/dev/null",
-        "done | grep -E '^[0-9a-f]{32}$' | sort -u"
+        "done | grep -E '^[0-9a-f]{32}$' | sort -u || true"
     ).joinToString("\n")
 
     fun checkVideoDirsCommand(hashes: List<String>): String {
         val valid = hashes.filter(::isValidAccountHash)
         if (valid.isEmpty()) return "exit 0"
-        return valid.joinToString("\n") { hash ->
+        val checks = valid.joinToString("\n") { hash ->
             "[ -d ${shellQuote("$CACHE_ROOT/$hash/finder/video")} ] && echo $hash"
         }
+        return "$checks\ntrue"
     }
 
     fun listFilesCommand(hash: String): String {

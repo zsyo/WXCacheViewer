@@ -4,19 +4,26 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.ui.res.stringResource
-import top.aico.wxcacheviewer.R
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import top.aico.wxcacheviewer.data.repository.SettingsRepository
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val settings = SettingsRepository(this)
         setContent {
             MaterialTheme {
-                Surface {
-                    Text(text = stringResource(id = R.string.app_name))
-                }
+                var selectedAccountHash by remember { mutableStateOf(settings.selectedAccountHash) }
+                AppRoot(
+                    selectedAccountHash = selectedAccountHash,
+                    onSelectedAccountChanged = {
+                        selectedAccountHash = it
+                        settings.selectedAccountHash = it
+                    }
+                )
             }
         }
     }

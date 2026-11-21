@@ -1,4 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">微信缓存查看器</string>
+    <string name="select_account_title">选择账号</string>
+    <string name="loading">正在读取账号…</string>
+    <string name="no_account_found">未发现微信账号</string>
+    <string name="account_has_video_cache">有视频缓存</string>
+    <string name="remark_label">备注</string>
+    <string name="use_account">使用此账号</string>
+    <string name="single_account_hint">仅发现一个账号</string>
+    <string name="root_error_no_su">未检测到 root 权限，请确认设备已 root 并安装 su</string>
+    <string name="root_error_denied">su 授权被拒绝，请在 Magisk 中允许本应用</string>
+    <string name="root_error_timeout">root 授权超时，请重试</string>
+    <string name="root_error_unknown">root 状态未知</string>
 </resources>
