@@ -74,6 +74,11 @@ class SimpleVideoPlayer(context: Context) {
         player.setPlaybackSpeed(value)
     }
 
+    /** 应用内音量，0f..1f。只作用于播放器自身，不影响系统媒体音量。 */
+    fun setVolume(value: Float) {
+        player.volume = value.coerceIn(0f, 1f)
+    }
+
     fun release() {
         player.removeListener(listener)
         player.release()

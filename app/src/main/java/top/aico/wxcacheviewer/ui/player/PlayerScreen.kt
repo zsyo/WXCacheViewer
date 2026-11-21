@@ -1,7 +1,5 @@
 package top.aico.wxcacheviewer.ui.player
 
-import android.content.Context
-import android.media.AudioManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -71,21 +69,18 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.data.playback.VideoPreparer
+import top.aico.wxcacheviewer.data.repository.SettingsRepository
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
 import top.aico.wxcacheviewer.domain.model.CacheFile
 import top.aico.wxcacheviewer.ui.common.formatDuration
+import kotlin.math.roundToInt
 
 @Composable
 fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val preparer = remember { VideoPreparer(RootCommandExecutor()) }
-    val audioManager = remember {
-        context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    }
-    val maxVolume = remember {
-        audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC).coerceAtLeast(1)
-    }
+    val settings = remember { SettingsRepository(context) }
     val volumePopupPositionProvider = remember {
         VolumePopupPositionProvider(gapPx = (6 * context.resources.displayMetrics.density).toInt())
     }
@@ -102,9 +97,7 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
     var controlsVisible by remember { mutableStateOf(true) }
     var interactionTick by remember { mutableIntStateOf(0) }
     var speed by remember { mutableFloatStateOf(1f) }
-    var volume by remember {
-        mutableIntStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC))
-    }
+    var volume by remember { mutableFloatStateOf(settings.playbackVolume) }
     var volumePanelVisible by remember { mutableStateOf(false) }
     var seekHint by remember { mutableIntStateOf(0) }
     var suppressTap by remember { mutableStateOf(false) }
@@ -112,6 +105,7 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
     BackHandler(onBack = onClose)
 
     DisposableEffect(videoPlayer) {
+        videoPlayer.setVolume(volume)
         onDispose { videoPlayer.release() }
     }
 
@@ -203,9 +197,14 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
     }
 
     val changeVolume: (Float) -> Unit = { value ->
-        val target = value.toInt().coerceIn(0, maxVolume)
-        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
-        volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+        val next = value.coerceIn(0f, 1f)
+        videoPlayer.setVolume(next)
+        volume = next
+    }
+
+    val commitVolume: () -> Unit = {
+        settings.playbackVolume = volume
+        interactionTick++
     }
 
     val preparing = copying || (!ready && error == null)
@@ -439,9 +438,6 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
                 Box {
                     IconButton(
                         onClick = {
-                            if (!volumePanelVisible) {
-                                volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-                            }
                             volumePanelVisible = !volumePanelVisible
                             interactionTick++
                         },
@@ -450,7 +446,7 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
                         Icon(
                             painter = painterResource(id = R.drawable.ic_volume),
                             contentDescription = stringResource(id = R.string.player_volume),
-                            tint = if (volume == 0) {
+                            tint = if (volume <= 0.001f) {
                                 Color.White.copy(alpha = 0.5f)
                             } else {
                                 Color.White
@@ -466,8 +462,8 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
                         ) {
                             VolumePanel(
                                 volume = volume,
-                                maxVolume = maxVolume,
-                                onVolumeChange = changeVolume
+                                onVolumeChange = changeVolume,
+                                onVolumeCommit = commitVolume
                             )
                         }
                     }
@@ -493,7 +489,11 @@ private class VolumePopupPositionProvider(private val gapPx: Int) : PopupPositio
 }
 
 @Composable
-private fun VolumePanel(volume: Int, maxVolume: Int, onVolumeChange: (Float) -> Unit) {
+private fun VolumePanel(
+    volume: Float,
+    onVolumeChange: (Float) -> Unit,
+    onVolumeCommit: () -> Unit
+) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
@@ -502,12 +502,16 @@ private fun VolumePanel(volume: Int, maxVolume: Int, onVolumeChange: (Float) -> 
             .padding(horizontal = 10.dp, vertical = 12.dp)
     ) {
         Text(
-            text = "${volume * 100 / maxVolume}%",
+            text = "${(volume * 100).roundToInt()}%",
             color = Color.White,
             style = MaterialTheme.typography.labelMedium
         )
         Spacer(modifier = Modifier.height(8.dp))
-        VerticalVolumeSlider(volume = volume, maxVolume = maxVolume, onVolumeChange = onVolumeChange)
+        VerticalVolumeSlider(
+            volume = volume,
+            onVolumeChange = onVolumeChange,
+            onVolumeCommit = onVolumeCommit
+        )
         Spacer(modifier = Modifier.height(8.dp))
         Icon(
             painter = painterResource(id = R.drawable.ic_volume),
@@ -520,25 +524,34 @@ private fun VolumePanel(volume: Int, maxVolume: Int, onVolumeChange: (Float) -> 
 
 /** 垂直音量条：自绘轨道与滑块，避免旋转水平 Slider 带来的触摸区域与裁剪问题。 */
 @Composable
-private fun VerticalVolumeSlider(volume: Int, maxVolume: Int, onVolumeChange: (Float) -> Unit) {
-    val progress = (volume.toFloat() / maxVolume.toFloat()).coerceIn(0f, 1f)
+private fun VerticalVolumeSlider(
+    volume: Float,
+    onVolumeChange: (Float) -> Unit,
+    onVolumeCommit: () -> Unit
+) {
+    val progress = volume.coerceIn(0f, 1f)
     val trackHeight = 132.dp
     val thumbSize = 14.dp
     val trackHeightPx = with(LocalDensity.current) { trackHeight.toPx() }
 
-    fun valueAt(y: Float): Float =
-        ((1f - y / trackHeightPx) * maxVolume).coerceIn(0f, maxVolume.toFloat())
+    fun valueAt(y: Float): Float = (1f - y / trackHeightPx).coerceIn(0f, 1f)
 
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .width(40.dp)
             .height(trackHeight)
-            .pointerInput(trackHeightPx, maxVolume) {
-                detectTapGestures { offset -> onVolumeChange(valueAt(offset.y)) }
+            .pointerInput(trackHeightPx) {
+                detectTapGestures { offset ->
+                    onVolumeChange(valueAt(offset.y))
+                    onVolumeCommit()
+                }
             }
-            .pointerInput(trackHeightPx, maxVolume) {
-                detectDragGestures { change, _ ->
+            .pointerInput(trackHeightPx) {
+                detectDragGestures(
+                    onDragEnd = onVolumeCommit,
+                    onDragCancel = onVolumeCommit
+                ) { change, _ ->
                     change.consume()
                     onVolumeChange(valueAt(change.position.y))
                 }

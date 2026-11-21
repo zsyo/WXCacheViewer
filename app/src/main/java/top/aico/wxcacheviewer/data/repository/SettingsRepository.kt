@@ -48,11 +48,19 @@ class SettingsRepository(context: Context) {
         preferences.edit().putString("$KEY_REMARK$hash", value).apply()
     }
 
+    /** 播放器应用内音量（0f..1f），与系统媒体音量相互独立。 */
+    var playbackVolume: Float
+        get() = preferences.getFloat(KEY_PLAYBACK_VOLUME, 1f).coerceIn(0f, 1f)
+        set(value) {
+            preferences.edit().putFloat(KEY_PLAYBACK_VOLUME, value.coerceIn(0f, 1f)).apply()
+        }
+
     private companion object {
         const val KEY_SELECTED_ACCOUNT = "selected_account_hash"
         const val KEY_GRID_MODE = "grid_mode"
         const val KEY_SORT_FIELD = "sort_field"
         const val KEY_SORT_DIRECTION = "sort_direction"
         const val KEY_REMARK = "remark_"
+        const val KEY_PLAYBACK_VOLUME = "playback_volume"
     }
 }
