@@ -202,4 +202,13 @@ spec/                    每个功能的规格文档
 
 ## 许可证
 
-[GPL-3.0](LICENSE)
+本项目以 [GNU General Public License v3.0](LICENSE)（GPL-3.0）发布，Copyright (C) 2026 zephyr。
+
+你可以自由使用、修改和再分发本程序，但须遵守 GPL-3.0 的条款：分发二进制时要一并提供完整源码，衍生作品继续以同一协议授权，且不得附加额外限制。
+
+随源码编译的第三方组件各有自己的协议，均与本项目所选协议兼容：
+
+- SILK v3 解码器：SILK SDK License（Skype Limited，BSD 三条款式，与 GPL 兼容）
+- LAME：LGPL 2.0 及以后版本（GPL 明确允许升格为 GPL 使用）
+- AndroidX、Jetpack Compose、Media3、Coil：Apache 2.0
+
