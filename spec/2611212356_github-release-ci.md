@@ -24,6 +24,7 @@
 - `setup-android` 的 `packages` 参数按空格切分，写成多行会把换行符带进包名导致安装失败，所以必须是单行。
 - 发布步骤只在 tag 触发时执行；手动触发时版本号用 `dev-<短 sha>`，不会污染 Release。
 - 校验：`apksigner verify --print-certs` 确认签名，`zipalign -c -P 16 4` 确认原生库仍是 16 KB 页对齐（见 `2611212150_16kb-page-align.md`）。
+- 构建命令用 `bash ./gradlew` 而不是 `./gradlew`：Windows 上开发时 gradlew 工作区有执行位但 Git 索引里是 `100644`，clone 到 Linux runner 上会 `Permission denied`（exit 126）。已用 `git update-index --chmod=+x gradlew` 把索引改成 `100755`，同时用 `bash` 调用做双保险。
 
 ## Release 正文与预发布
 
