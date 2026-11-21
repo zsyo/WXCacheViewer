@@ -441,19 +441,27 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
                     color = Color.White,
                     style = MaterialTheme.typography.labelMedium
                 )
-                Text(
-                    text = formatSpeed(speed),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelLarge,
+                // 固定宽度：倍速文案从 1x 变到 0.75x 时不再挤压左侧进度条
+                Box(
+                    contentAlignment = Alignment.Center,
                     modifier = Modifier
+                        .width(52.dp)
+                        .height(40.dp)
                         .clip(RoundedCornerShape(6.dp))
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
                             onClick = cycleSpeed
                         )
-                        .padding(horizontal = 8.dp, vertical = 8.dp)
-                )
+                ) {
+                    Text(
+                        text = formatSpeed(speed),
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
                 Box {
                     IconButton(
                         onClick = {
