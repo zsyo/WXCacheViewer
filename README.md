@@ -119,6 +119,8 @@ keyAlias=wxcacheviewer
 keyPassword=你的密码
 ```
 
+`storePassword` 与 `keyPassword` 必须填**同一个值**：密钥库是 PKCS12 格式，整个容器（含私钥）由单一口令保护，`keytool` 生成时只问一次口令，key 密码自动取 store 密码。如果两项填不同值，签名会报密码错误。
+
 `app/build.gradle.kts` 会优先读环境变量 `KEYSTORE_FILE` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`，都没有时才读这个文件；两者都缺失就退回未签名构建，所以别人 clone 下来只跑 debug 或 fork 提 PR 都不需要密钥。
 
 ## GitHub Actions 自动构建与发布
@@ -135,6 +137,8 @@ keyPassword=你的密码
      -dname "CN=zsyo, O=WXCacheViewer, C=CN"
    ```
 
+   PKCS12 只问一次「密钥库口令」（再输一次确认），不会再单独问 key 密码——私钥条目自动沿用 store 口令。
+
    文件不要提交，也不要放进仓库目录。
 
 2. **把密钥库编码成文本**。GitHub Secrets 只存文本，二进制密钥库要先 base64：
@@ -149,9 +153,9 @@ keyPassword=你的密码
    | Secret | 值 |
    | --- | --- |
    | `KEYSTORE_B64` | 上一步得到的 base64 字符串 |
-   | `KEYSTORE_PASSWORD` | 生成密钥库时设置的 store 密码 |
+   | `KEYSTORE_PASSWORD` | 生成密钥库时设置的口令 |
    | `KEY_ALIAS` | `wxcacheviewer` |
-   | `KEY_PASSWORD` | 生成密钥库时设置的 key 密码 |
+   | `KEY_PASSWORD` | 与 `KEYSTORE_PASSWORD` 相同（PKCS12 单一口令） |
 
 4. **推 tag 触发**：
 

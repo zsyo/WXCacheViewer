@@ -10,6 +10,7 @@
 
 - 环境变量：`KEYSTORE_FILE` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`，供 CI 使用；
 - 根目录 `keystore.properties`：`storeFile` / `storePassword` / `keyAlias` / `keyPassword`，供本地构建使用，已加入 `.gitignore`；
+- 密钥库为 PKCS12 格式，整个容器（含私钥）由单一口令保护：`keytool -genkeypair -storetype PKCS12` 不传 `-keypass` 时只询问一次口令，key 密码自动取 store 密码。因此 properties 里的 `storePassword` 与 `keyPassword` 必须填同一个值，GitHub 侧的 `KEYSTORE_PASSWORD` 与 `KEY_PASSWORD` 也填同一个值，填不同会签名失败；
 - 两者都缺失时不创建 `release` signingConfig，`assembleRelease` 退回未签名构建，这样 fork 提 PR 或别人 clone 后只跑 debug 都不会因缺密钥失败。
 
 版本号同样从环境注入：`VERSION_NAME` 默认 `0.1`，`VERSION_CODE` 默认 `1`。CI 分别用 tag 名和 `github.run_number`。
