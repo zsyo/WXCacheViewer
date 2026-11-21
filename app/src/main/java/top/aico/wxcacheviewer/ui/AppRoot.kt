@@ -2,7 +2,6 @@ package top.aico.wxcacheviewer.ui
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -10,7 +9,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import top.aico.wxcacheviewer.ui.account.AccountSelectScreen
+import top.aico.wxcacheviewer.ui.gallery.GalleryScreen
 import top.aico.wxcacheviewer.viewmodel.AccountViewModel
+import top.aico.wxcacheviewer.viewmodel.GalleryViewModel
 
 @Composable
 fun AppRoot(
@@ -36,7 +37,22 @@ fun AppRoot(
                 onRetry = accountViewModel::refresh
             )
         } else {
-            Text(text = "已选择账号：$selectedAccountHash")
+            val galleryViewModel: GalleryViewModel = viewModel(key = selectedAccountHash)
+            val galleryState by galleryViewModel.uiState.collectAsState()
+
+            LaunchedEffect(selectedAccountHash) {
+                galleryViewModel.load(selectedAccountHash)
+            }
+
+            val remark = accountState.remarks[selectedAccountHash]
+            GalleryScreen(
+                state = galleryState,
+                title = if (remark.isNullOrBlank()) selectedAccountHash else remark,
+                canSwitchAccount = accountState.accounts.size > 1,
+                onToggleGridMode = galleryViewModel::toggleGridMode,
+                onRequestSwitch = { onSelectedAccountChanged("") },
+                onRetry = { galleryViewModel.load(selectedAccountHash) }
+            )
         }
     }
 }
