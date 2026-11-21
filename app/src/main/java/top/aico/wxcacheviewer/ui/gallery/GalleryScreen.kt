@@ -30,8 +30,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -79,6 +82,7 @@ fun GalleryScreen(
     onSetSortOption: (SortOption) -> Unit,
     onSwitchAccount: (String) -> Unit,
     onSaveRemark: (String, String) -> Unit,
+    onRefresh: () -> Unit,
     onRetry: () -> Unit
 ) {
     val context = LocalContext.current
@@ -97,7 +101,16 @@ fun GalleryScreen(
         }
     }
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(state.error, state.files.isEmpty()) {
+        val message = state.error
+        if (message != null && state.files.isNotEmpty()) {
+            snackbarHostState.showSnackbar(message)
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -145,28 +158,35 @@ fun GalleryScreen(
             )
         }
     ) { padding ->
-        when {
-            state.loading -> LoadingView(text = stringResource(id = R.string.loading_files))
+        PullToRefreshBox(
+            isRefreshing = state.refreshing,
+            onRefresh = onRefresh,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+        ) {
+            when {
+                state.loading -> LoadingView(text = stringResource(id = R.string.loading_files))
 
-            state.error != null -> ErrorView(message = state.error, onRetry = onRetry)
+                state.files.isEmpty() && state.error != null ->
+                    ErrorView(message = state.error, onRetry = onRetry)
 
-            state.files.isEmpty() -> ErrorView(
-                message = stringResource(id = R.string.no_cache_files),
-                onRetry = onRetry
-            )
+                state.files.isEmpty() -> ErrorView(
+                    message = stringResource(id = R.string.no_cache_files),
+                    onRetry = onRetry
+                )
 
-            else -> LazyVerticalGrid(
-                columns = GridCells.Fixed(if (state.gridMode == GridMode.TWO) 2 else 1),
-                state = gridState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentPadding = PaddingValues(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(items = state.files, key = { it.name }) { file ->
-                    CacheFileTile(file = file, thumbnailLoader = thumbnailLoader)
+                else -> LazyVerticalGrid(
+                    columns = GridCells.Fixed(if (state.gridMode == GridMode.TWO) 2 else 1),
+                    state = gridState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(items = state.files, key = { it.name }) { file ->
+                        CacheFileTile(file = file, thumbnailLoader = thumbnailLoader)
+                    }
                 }
             }
         }

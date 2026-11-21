@@ -21,6 +21,7 @@ data class GalleryUiState(
     val files: List<CacheFile> = emptyList(),
     val gridMode: GridMode = GridMode.TWO,
     val sortOption: SortOption = SortOption(),
+    val refreshing: Boolean = false,
     val error: String? = null
 )
 
@@ -48,6 +49,29 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 }
             } catch (e: Exception) {
                 _uiState.update { it.copy(loading = false, error = e.message ?: "读取缓存文件失败") }
+            }
+        }
+    }
+
+    /**
+     * 下拉刷新：保留当前列表内容，只显示刷新指示器，避免整屏回到加载态。
+     */
+    fun refresh(accountHash: String) {
+        if (_uiState.value.refreshing) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(refreshing = true, error = null) }
+            try {
+                val files = repository.listFiles(accountHash)
+                _uiState.update {
+                    it.copy(
+                        refreshing = false,
+                        files = CacheFileSorter.sort(files, it.sortOption)
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(refreshing = false, error = e.message ?: "刷新缓存文件失败")
+                }
             }
         }
     }

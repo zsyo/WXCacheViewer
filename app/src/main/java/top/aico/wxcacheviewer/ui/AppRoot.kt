@@ -56,6 +56,7 @@ fun AppRoot(
                 onSetSortOption = galleryViewModel::setSortOption,
                 onSwitchAccount = { onSelectedAccountChanged(it) },
                 onSaveRemark = accountViewModel::saveRemark,
+                onRefresh = { galleryViewModel.refresh(selectedAccountHash) },
                 onRetry = { galleryViewModel.load(selectedAccountHash) }
             )
         }
