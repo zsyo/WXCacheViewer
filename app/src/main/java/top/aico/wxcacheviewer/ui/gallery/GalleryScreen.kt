@@ -92,18 +92,26 @@ fun GalleryScreen(
                     )
                 },
                 actions = {
-                    ViewModeButton(
-                        iconRes = R.drawable.ic_view_list,
-                        descriptionRes = R.string.view_mode_list,
-                        selected = state.gridMode == GridMode.ONE,
-                        onClick = { onSetGridMode(GridMode.ONE) }
-                    )
-                    ViewModeButton(
-                        iconRes = R.drawable.ic_view_grid,
-                        descriptionRes = R.string.view_mode_grid,
-                        selected = state.gridMode == GridMode.TWO,
-                        onClick = { onSetGridMode(GridMode.TWO) }
-                    )
+                    val nextMode = if (state.gridMode == GridMode.TWO) GridMode.ONE else GridMode.TWO
+                    IconButton(onClick = { onSetGridMode(nextMode) }) {
+                        Icon(
+                            painter = painterResource(
+                                id = if (nextMode == GridMode.ONE) {
+                                    R.drawable.ic_view_list
+                                } else {
+                                    R.drawable.ic_view_grid
+                                }
+                            ),
+                            contentDescription = stringResource(
+                                id = if (nextMode == GridMode.ONE) {
+                                    R.string.view_mode_list
+                                } else {
+                                    R.string.view_mode_grid
+                                }
+                            ),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             )
         }
@@ -192,26 +200,6 @@ private fun AccountTitle(
             imageVector = Icons.Filled.ArrowDropDown,
             contentDescription = stringResource(id = R.string.switch_account),
             tint = chevronTint
-        )
-    }
-}
-
-@Composable
-private fun ViewModeButton(
-    iconRes: Int,
-    descriptionRes: Int,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    IconButton(onClick = onClick) {
-        Icon(
-            painter = painterResource(id = iconRes),
-            contentDescription = stringResource(id = descriptionRes),
-            tint = if (selected) {
-                MaterialTheme.colorScheme.primary
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            }
         )
     }
 }
