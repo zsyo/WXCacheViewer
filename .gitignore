@@ -10,3 +10,7 @@
 local.properties
 /app/build
 /commandlinetools.zip
+# 签名材料不进仓库
+keystore.properties
+*.jks
+*.keystore

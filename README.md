@@ -108,7 +108,63 @@ Android 16 及以上系统对应用数据目录做了更强的隔离，直接在
 ./gradlew assembleRelease
 ```
 
-`gradle.properties` 中有一行 `org.gradle.java.home`，指向开发机上的 JDK 17 绝对路径。如果你本机路径不同，请改成自己的路径或直接删除该行并设置 `JAVA_HOME`。同理，`local.properties` 里的 `sdk.dir` 需要指向你自己的 SDK 位置（该文件已被 `.gitignore` 排除）。
+`gradle.properties` 中有一行 `org.gradle.java.home`，指向开发机上的 JDK 17 绝对路径。如果你本机路径不同，请改成自己的路径或直接删除该行并设置 `JAVA_HOME`。同理，`local.properties` 里的 `sdk.dir` 需要指向你自己的 SDK 位置（该文件已被 `.gitignore` 排除）。CI 会自动删掉 `org.gradle.java.home` 这一行，无需为 Linux runner 手动改仓库文件。
+
+本地要打**签名**发布包，在根目录建一个 `keystore.properties`（已被 `.gitignore` 排除，不会进仓库）：
+
+```properties
+storeFile=release.keystore
+storePassword=你的密码
+keyAlias=wxcacheviewer
+keyPassword=你的密码
+```
+
+`app/build.gradle.kts` 会优先读环境变量 `KEYSTORE_FILE` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`，都没有时才读这个文件；两者都缺失就退回未签名构建，所以别人 clone 下来只跑 debug 或 fork 提 PR 都不需要密钥。
+
+## GitHub Actions 自动构建与发布
+
+推送 `v` 开头的 tag（如 `v0.1.0`）会触发 `.github/workflows/release.yml`：自动装 JDK 17 与 NDK 28.2.13676358 / CMake 3.22.1，跑单测与 lint，用密钥签名后产出 APK，校验签名与 16 KB 页对齐，最后把 APK 附到对应的 GitHub Release 上。也可在 Actions 页面手动触发来验证流水线，手动触发不发布 Release。
+
+首次接入按下面步骤做一次：
+
+1. **准备密钥库**。用 `keytool` 生成一次，长期保存（丢失后无法再给已安装用户升级，只能让用户卸载重装）：
+
+   ```bash
+   keytool -genkeypair -v -keystore release.keystore -storetype PKCS12 \
+     -alias wxcacheviewer -keyalg RSA -keysize 4096 -validity 10000 \
+     -dname "CN=zsyo, O=WXCacheViewer, C=CN"
+   ```
+
+   文件不要提交，也不要放进仓库目录。
+
+2. **把密钥库编码成文本**。GitHub Secrets 只存文本，二进制密钥库要先 base64：
+
+   ```bash
+   base64 -w0 release.keystore > keystore.b64   # Linux
+   # PowerShell: [Convert]::ToBase64String([IO.File]::ReadAllBytes("release.keystore"))
+   ```
+
+3. **添加四个 Secrets**。在仓库 Settings → Secrets and variables → Actions → New repository secret 里逐个添加：
+
+   | Secret | 值 |
+   | --- | --- |
+   | `KEYSTORE_B64` | 上一步得到的 base64 字符串 |
+   | `KEYSTORE_PASSWORD` | 生成密钥库时设置的 store 密码 |
+   | `KEY_ALIAS` | `wxcacheviewer` |
+   | `KEY_PASSWORD` | 生成密钥库时设置的 key 密码 |
+
+4. **推 tag 触发**：
+
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+
+   `versionName` 取 tag 去掉 `v` 后的部分（`v0.1.0` → `0.1.0`），`versionCode` 取 GitHub 的 run number，保证每次发版都递增。`KEYSTORE_B64` 在构建时解码到 runner 的临时目录，不会进入仓库或产物。
+
+5. **取产物**。每个 tag 的 APK 在两个地方：Actions 运行页 Artifacts（保留 14 天）和该 tag 对应的 GitHub Release 附件（长期保留）。`apksigner verify` 与 `zipalign -c -P 16` 在上传前已校验通过。
+
+注意：release 签名与开发时装的 debug 包签名不同，覆盖安装会报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`，需先卸载旧包（会清掉应用私有数据，不影响微信缓存本身）。另外按 GPL-3.0，发布二进制时仓库需保持可访问以提供对应源码。
 
 ## 使用说明
 
