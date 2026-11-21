@@ -4,8 +4,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 
 data class ShellResult(
     val stdout: String,
@@ -33,15 +33,12 @@ open class RootCommandExecutor {
             val stdoutDeferred = async { process.inputStream.bufferedReader().use { it.readText() } }
             val stderrDeferred = async { process.errorStream.bufferedReader().use { it.readText() } }
 
-            val finished = try {
-                runInterruptible { process.waitFor(timeoutMs, TimeUnit.MILLISECONDS) }
-            } catch (e: InterruptedException) {
-                process.destroyForcibly()
-                return@withContext ShellResult("", -1, e.message ?: "interrupted")
+            val finished = withTimeoutOrNull(timeoutMs) {
+                runInterruptible { process.waitFor() }
             }
 
-            if (!finished) {
-                process.destroyForcibly()
+            if (finished == null) {
+                process.destroy()
                 return@withContext ShellResult("", -1, "command timed out", timedOut = true)
             }
 
