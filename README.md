@@ -176,6 +176,7 @@ app/src/main/java/top/aico/wxcacheviewer/
 ├── viewmodel/           账号与相册的 UI 状态
 └── ui/                  Compose 界面：账号选择、相册、文件列表、播放器、图片预览
 app/src/main/cpp/        SILK v3 解码器与 LAME 的 C 源码、JNI 入口与 CMake 脚本
+art/                     应用图标的原始设计稿（PNG），据此生成各密度 mipmap
 spec/                    每个功能的规格文档
 ```
 
