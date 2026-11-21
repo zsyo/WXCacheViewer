@@ -44,15 +44,15 @@ fun AppRoot(
                 galleryViewModel.load(selectedAccountHash)
             }
 
-            val remark = accountState.remarks[selectedAccountHash]
+            val remark = accountState.remarks[selectedAccountHash].orEmpty()
             GalleryScreen(
                 state = galleryState,
                 accountHash = selectedAccountHash,
-                title = if (remark.isNullOrBlank()) selectedAccountHash else remark,
+                remark = remark,
                 accounts = accountState.accounts,
                 remarks = accountState.remarks,
                 canSwitchAccount = accountState.accounts.size > 1,
-                onToggleGridMode = galleryViewModel::toggleGridMode,
+                onSetGridMode = galleryViewModel::setGridMode,
                 onSwitchAccount = { onSelectedAccountChanged(it) },
                 onSaveRemark = accountViewModel::saveRemark,
                 onRetry = { galleryViewModel.load(selectedAccountHash) }

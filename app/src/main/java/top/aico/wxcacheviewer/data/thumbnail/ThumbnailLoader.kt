@@ -7,6 +7,7 @@ import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import top.aico.wxcacheviewer.data.log.AppLog
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
 import top.aico.wxcacheviewer.data.root.WxPaths
 import top.aico.wxcacheviewer.domain.model.CacheFile
@@ -31,20 +32,24 @@ class ThumbnailLoader(
             WxPaths.copyFileCommand(accountHash, file.name, destination.absolutePath),
             COPY_TIMEOUT_MS
         )
-        if (copyResult.exitCode != 0) return@withContext null
+        if (copyResult.exitCode != 0) {
+            AppLog.log("thumb", "copy failed exit=${copyResult.exitCode} ${file.name} ${copyResult.stderr.take(160)}")
+            return@withContext null
+        }
 
         ensureActive()
         val retriever = MediaMetadataRetriever()
         val frame = try {
             retriever.setDataSource(destination.absolutePath)
-            retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
-                ?.let(::scale)
+            firstFrame(retriever)?.let(::scale)
         } catch (e: Exception) {
+            AppLog.log("thumb", "decode failed ${file.name}: ${e.message}")
             null
         } finally {
             retriever.release()
             destination.delete()
         }
+        if (frame == null) AppLog.log("thumb", "no frame ${file.name}")
         if (frame != null) cache.put(key, frame)
         frame
     }
@@ -53,6 +58,11 @@ class ThumbnailLoader(
         cache.evictAll()
         tempDir.listFiles()?.forEach { it.delete() }
     }
+
+    private fun firstFrame(retriever: MediaMetadataRetriever): Bitmap? =
+        retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            ?: retriever.getFrameAtTime(1, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            ?: retriever.getFrameAtTime()
 
     private fun scale(source: Bitmap): Bitmap {
         val targetWidth = minOf(MAX_FRAME_WIDTH, source.width)

@@ -3,10 +3,12 @@ package top.aico.wxcacheviewer.ui.gallery
 import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,13 +16,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,9 +37,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -47,6 +55,7 @@ import top.aico.wxcacheviewer.ui.account.AccountSwitchDialog
 import top.aico.wxcacheviewer.ui.common.ErrorView
 import top.aico.wxcacheviewer.ui.common.LoadingView
 import top.aico.wxcacheviewer.ui.common.formatFileSize
+import top.aico.wxcacheviewer.ui.common.shortHash
 import top.aico.wxcacheviewer.viewmodel.GalleryUiState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,11 +63,11 @@ import top.aico.wxcacheviewer.viewmodel.GalleryUiState
 fun GalleryScreen(
     state: GalleryUiState,
     accountHash: String,
-    title: String,
+    remark: String,
     accounts: List<Account>,
     remarks: Map<String, String>,
     canSwitchAccount: Boolean,
-    onToggleGridMode: () -> Unit,
+    onSetGridMode: (GridMode) -> Unit,
     onSwitchAccount: (String) -> Unit,
     onSaveRemark: (String, String) -> Unit,
     onRetry: () -> Unit
@@ -74,20 +83,27 @@ fun GalleryScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(text = title) },
+                title = {
+                    AccountTitle(
+                        hash = accountHash,
+                        remark = remark,
+                        canSwitch = canSwitchAccount,
+                        onClick = { showSwitchDialog = true }
+                    )
+                },
                 actions = {
-                    TextButton(onClick = onToggleGridMode) {
-                        Text(
-                            text = if (state.gridMode == GridMode.TWO) {
-                                stringResource(id = R.string.switch_to_one_column)
-                            } else {
-                                stringResource(id = R.string.switch_to_two_columns)
-                            }
-                        )
-                    }
-                    TextButton(onClick = { showSwitchDialog = true }, enabled = canSwitchAccount) {
-                        Text(text = stringResource(id = R.string.switch_account))
-                    }
+                    ViewModeButton(
+                        iconRes = R.drawable.ic_view_list,
+                        descriptionRes = R.string.view_mode_list,
+                        selected = state.gridMode == GridMode.ONE,
+                        onClick = { onSetGridMode(GridMode.ONE) }
+                    )
+                    ViewModeButton(
+                        iconRes = R.drawable.ic_view_grid,
+                        descriptionRes = R.string.view_mode_grid,
+                        selected = state.gridMode == GridMode.TWO,
+                        onClick = { onSetGridMode(GridMode.TWO) }
+                    )
                 }
             )
         }
@@ -129,6 +145,73 @@ fun GalleryScreen(
             },
             onSaveRemark = onSaveRemark,
             onDismiss = { showSwitchDialog = false }
+        )
+    }
+}
+
+@Composable
+private fun AccountTitle(
+    hash: String,
+    remark: String,
+    canSwitch: Boolean,
+    onClick: () -> Unit
+) {
+    val short = shortHash(hash)
+    val hasRemark = remark.isNotBlank()
+    val chevronTint = if (canSwitch) {
+        MaterialTheme.colorScheme.onSurface
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+    }
+
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = canSwitch, onClick = onClick)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Column {
+            Text(
+                text = if (hasRemark) remark else short,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (hasRemark) {
+                Text(
+                    text = short,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+            }
+        }
+        Icon(
+            imageVector = Icons.Filled.ArrowDropDown,
+            contentDescription = stringResource(id = R.string.switch_account),
+            tint = chevronTint
+        )
+    }
+}
+
+@Composable
+private fun ViewModeButton(
+    iconRes: Int,
+    descriptionRes: Int,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    IconButton(onClick = onClick) {
+        Icon(
+            painter = painterResource(id = iconRes),
+            contentDescription = stringResource(id = descriptionRes),
+            tint = if (selected) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
         )
     }
 }

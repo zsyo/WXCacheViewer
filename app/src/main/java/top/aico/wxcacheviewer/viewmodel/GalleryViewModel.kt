@@ -39,9 +39,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun toggleGridMode() {
-        val next = if (_uiState.value.gridMode == GridMode.TWO) GridMode.ONE else GridMode.TWO
-        settings.gridMode = next
-        _uiState.update { it.copy(gridMode = next) }
+    fun setGridMode(mode: GridMode) {
+        if (_uiState.value.gridMode == mode) return
+        settings.gridMode = mode
+        _uiState.update { it.copy(gridMode = mode) }
     }
 }
