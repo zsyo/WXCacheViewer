@@ -53,6 +53,10 @@ class SimpleVideoPlayer(context: Context) {
     val isPlaying: Boolean
         get() = player.isPlaying
 
+    /** 播放到结尾。此时 Player.play() 不会重新开始，必须先 seek 回起点。 */
+    val isEnded: Boolean
+        get() = player.playbackState == Player.STATE_ENDED
+
     fun durationMs(): Int =
         if (player.duration == C.TIME_UNSET) 0 else player.duration.toInt()
 
@@ -62,6 +66,9 @@ class SimpleVideoPlayer(context: Context) {
         if (player.isPlaying) {
             player.pause()
         } else {
+            if (player.playbackState == Player.STATE_ENDED) {
+                player.seekTo(0)
+            }
             player.play()
         }
     }

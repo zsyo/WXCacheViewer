@@ -176,6 +176,10 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
     }
 
     val togglePlayback: () -> Unit = {
+        // 播放结束后再点播放按钮：从头重播。暂停中恢复的逻辑不受影响。
+        if (videoPlayer.isEnded) {
+            positionMs = 0L
+        }
         videoPlayer.toggle()
         isPlaying = videoPlayer.isPlaying
         keepControlsVisible()
