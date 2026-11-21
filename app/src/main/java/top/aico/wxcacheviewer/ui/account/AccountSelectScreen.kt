@@ -76,6 +76,7 @@ fun AccountSelectScreen(
                     AccountItem(
                         hash = account.hash,
                         remark = state.remarks[account.hash].orEmpty(),
+                        autoName = state.autoNames[account.hash].orEmpty(),
                         hasVideoCache = account.hasVideoCache,
                         onSaveRemark = { onSaveRemark(account.hash, it) },
                         onSelect = { onSelect(account.hash) }
@@ -98,11 +99,13 @@ fun AccountSelectScreen(
 private fun AccountItem(
     hash: String,
     remark: String,
+    autoName: String,
     hasVideoCache: Boolean,
     onSaveRemark: (String) -> Unit,
     onSelect: () -> Unit
 ) {
     var remarkText by remember(hash) { mutableStateOf(remark) }
+    val displayName = remark.ifBlank { autoName }
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -111,7 +114,17 @@ private fun AccountItem(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(text = hash, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = displayName.ifBlank { hash },
+                style = MaterialTheme.typography.titleMedium
+            )
+            if (displayName.isNotBlank()) {
+                Text(
+                    text = hash,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             if (hasVideoCache) {
                 Text(
                     text = stringResource(id = R.string.account_has_video_cache),
@@ -126,6 +139,11 @@ private fun AccountItem(
                     onSaveRemark(it)
                 },
                 label = { Text(text = stringResource(id = R.string.remark_label)) },
+                placeholder = if (autoName.isNotBlank()) {
+                    { Text(text = autoName) }
+                } else {
+                    null
+                },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )

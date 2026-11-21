@@ -68,4 +68,38 @@ class WxPathsTest {
         assertTrue(command.startsWith("cp '"))
         assertTrue(command.contains("chmod 0644 '/tmp/x.mp4'"))
     }
+
+    @Test
+    fun copyFinderAccountDbCommandCopiesWalAndMarksMissing() {
+        val command = WxPaths.copyFinderAccountDbCommand(hash, "/data/user/0/top.aico/x")
+        assertTrue(command.contains("'${WxPaths.MICROMSG_ROOT}/$hash/${WxPaths.FINDER_ACCOUNT_DB}'"))
+        assertTrue(command.contains("MISSING"))
+        assertTrue(command.contains("-wal"))
+        assertTrue(command.contains("-shm"))
+        // 只改文件权限，不能用 -R 把目录的执行位也抹掉。
+        assertTrue(command.contains("chmod 0666 '/data/user/0/top.aico/x/${WxPaths.FINDER_ACCOUNT_DB}'"))
+        assertFalse(command.contains("chmod -R"))
+        assertTrue(command.endsWith("echo OK"))
+    }
+
+    @Test
+    fun copyFinderAccountDbCommandRejectsInvalidHash() {
+        try {
+            WxPaths.copyFinderAccountDbCommand("$hash;id", "/tmp/x")
+            org.junit.Assert.fail("invalid hash should throw")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("Invalid account hash"))
+        }
+    }
+
+    @Test
+    fun readLoginPrefsCommandOnlyGrepsTwoFields() {
+        val command = WxPaths.readLoginPrefsCommand()
+        val lines = command.lines()
+        assertEquals(2, lines.size)
+        assertTrue(lines[0].startsWith("grep -o "))
+        assertTrue(lines[0].contains("last_login_nick_name"))
+        assertTrue(lines[1].contains("last_login_uin"))
+        assertTrue(command.contains("'${WxPaths.LOGIN_PREFS_FILE}'"))
+    }
 }

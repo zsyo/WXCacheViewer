@@ -3,6 +3,14 @@ package top.aico.wxcacheviewer.data.root
 object WxPaths {
     const val CACHE_ROOT = "/data/user/0/com.tencent.mm/cache"
     const val IDENTITY_ROOT = "/data/user/0/com.tencent.mm/files/identity_records"
+    const val MICROMSG_ROOT = "/data/user/0/com.tencent.mm/MicroMsg"
+    const val LOGIN_PREFS_FILE =
+        "/data/user/0/com.tencent.mm/shared_prefs/com.tencent.mm_preferences.xml"
+
+    /** 每个账号目录下自带一份视频号资料库，明文 SQLite，可用于识别该账号的昵称。 */
+    const val FINDER_ACCOUNT_DB = "FinderAccounts_01.db"
+
+    const val MISSING_MARK = "MISSING"
 
     /**
      * 微信数据目录的两种等价写法：/data/data 与 /data/user/0 在多数设备上是同一个目录，
@@ -81,4 +89,42 @@ object WxPaths {
         val destDir = shellQuote(destination.substringBeforeLast('/'))
         return "mkdir -p $destDir && cp -f $source $dest && chmod 0644 $dest && echo OK"
     }
+
+    /**
+     * 把账号目录下的 FinderAccounts_01.db 复制到应用私有目录（目录由应用预先创建）。
+     *
+     * WAL 文件里可能还有未合并的写入，缺了它容易读到空表，因此 -wal、-shm 一起复制；
+     * 复制件属主是 root，逐个改成 0666 让应用进程可以打开（SQLite 在 WAL 模式下要写 -shm）。
+     * 源文件不存在时输出 MISSING，便于与其它失败区分。
+     */
+    fun copyFinderAccountDbCommand(hash: String, destinationDir: String): String {
+        require(isValidAccountHash(hash)) { "Invalid account hash: $hash" }
+        val source = "$MICROMSG_ROOT/$hash/$FINDER_ACCOUNT_DB"
+        val destination = "$destinationDir/$FINDER_ACCOUNT_DB"
+        return listOf(
+            "[ -f ${shellQuote(source)} ] || { echo $MISSING_MARK; exit 0; }",
+            "cp -f ${shellQuote(source)} ${shellQuote(destination)}",
+            "chmod 0666 ${shellQuote(destination)}",
+            "if [ -f ${shellQuote("$source-wal")} ]; then " +
+                "cp -f ${shellQuote("$source-wal")} ${shellQuote("$destination-wal")} && " +
+                "chmod 0666 ${shellQuote("$destination-wal")}; fi",
+            "if [ -f ${shellQuote("$source-shm")} ]; then " +
+                "cp -f ${shellQuote("$source-shm")} ${shellQuote("$destination-shm")} && " +
+                "chmod 0666 ${shellQuote("$destination-shm")}; fi",
+            "echo OK"
+        ).joinToString("\n")
+    }
+
+    /**
+     * 只摘出「最后登录账号」的昵称与 uin。整份 prefs 里还有手机号等敏感字段，
+     * 用 grep 定点取值，避免把整个文件读进内存或写进日志。
+     */
+    fun readLoginPrefsCommand(): String {
+        val file = shellQuote(LOGIN_PREFS_FILE)
+        return LOGIN_PREF_FIELDS.joinToString("\n") { field ->
+            "grep -o " + shellQuote("name=\"$field\">[^<]*") + " $file 2>/dev/null || true"
+        }
+    }
+
+    private val LOGIN_PREF_FIELDS = listOf("last_login_nick_name", "last_login_uin")
 }

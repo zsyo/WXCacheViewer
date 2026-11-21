@@ -26,6 +26,7 @@ import top.aico.wxcacheviewer.domain.model.Account
 fun AccountSwitchDialog(
     accounts: List<Account>,
     remarks: Map<String, String>,
+    autoNames: Map<String, String>,
     currentHash: String,
     onSelect: (String) -> Unit,
     onSaveRemark: (String, String) -> Unit,
@@ -40,6 +41,7 @@ fun AccountSwitchDialog(
                     SwitchAccountItem(
                         hash = account.hash,
                         remark = remarks[account.hash].orEmpty(),
+                        autoName = autoNames[account.hash].orEmpty(),
                         selected = account.hash == currentHash,
                         onSaveRemark = { onSaveRemark(account.hash, it) },
                         onSelect = { onSelect(account.hash) }
@@ -59,16 +61,29 @@ fun AccountSwitchDialog(
 private fun SwitchAccountItem(
     hash: String,
     remark: String,
+    autoName: String,
     selected: Boolean,
     onSaveRemark: (String) -> Unit,
     onSelect: () -> Unit
 ) {
     var remarkText by remember(hash) { mutableStateOf(remark) }
+    val displayName = remark.ifBlank { autoName }
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = if (selected) "$hash（当前）" else hash,
+            text = displayName.ifBlank { hash } + if (selected) {
+                stringResource(id = R.string.account_current_suffix)
+            } else {
+                ""
+            },
             style = MaterialTheme.typography.bodyMedium
         )
+        if (displayName.isNotBlank()) {
+            Text(
+                text = hash,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         OutlinedTextField(
             value = remarkText,
             onValueChange = {
@@ -76,6 +91,11 @@ private fun SwitchAccountItem(
                 onSaveRemark(it)
             },
             label = { Text(text = stringResource(id = R.string.remark_label)) },
+            placeholder = if (autoName.isNotBlank()) {
+                { Text(text = autoName) }
+            } else {
+                null
+            },
             singleLine = true,
             modifier = Modifier
                 .fillMaxWidth()

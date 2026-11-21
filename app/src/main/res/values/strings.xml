@@ -11,6 +11,7 @@
     <string name="use_account">使用此账号</string>
     <string name="single_account_hint">仅发现一个账号</string>
     <string name="switch_account">切换账号</string>
+    <string name="account_current_suffix">（当前）</string>
     <string name="cancel">取消</string>
     <string name="view_mode_list">列表视图</string>
     <string name="view_mode_grid">网格视图</string>

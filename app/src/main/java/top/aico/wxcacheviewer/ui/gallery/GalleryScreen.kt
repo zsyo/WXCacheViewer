@@ -91,8 +91,10 @@ fun GalleryScreen(
     state: GalleryUiState,
     accountHash: String,
     remark: String,
+    autoName: String,
     accounts: List<Account>,
     remarks: Map<String, String>,
+    autoNames: Map<String, String>,
     canSwitchAccount: Boolean,
     onSetGridMode: (GridMode) -> Unit,
     onSetSortOption: (SortOption) -> Unit,
@@ -161,6 +163,7 @@ fun GalleryScreen(
                         AccountTitle(
                             hash = accountHash,
                             remark = remark,
+                            autoName = autoName,
                             canSwitch = canSwitchAccount,
                             onClick = { showSwitchDialog = true }
                         )
@@ -291,6 +294,7 @@ fun GalleryScreen(
         AccountSwitchDialog(
             accounts = accounts,
             remarks = remarks,
+            autoNames = autoNames,
             currentHash = accountHash,
             onSelect = {
                 onSwitchAccount(it)
@@ -505,11 +509,13 @@ private fun SortDirection.labelRes(): Int = when (this) {
 private fun AccountTitle(
     hash: String,
     remark: String,
+    autoName: String,
     canSwitch: Boolean,
     onClick: () -> Unit
 ) {
     val short = shortHash(hash)
-    val hasRemark = remark.isNotBlank()
+    val displayName = remark.ifBlank { autoName }
+    val hasName = displayName.isNotBlank()
     val chevronTint = if (canSwitch) {
         MaterialTheme.colorScheme.onSurface
     } else {
@@ -526,12 +532,12 @@ private fun AccountTitle(
     ) {
         Column {
             Text(
-                text = if (hasRemark) remark else short,
+                text = if (hasName) displayName else short,
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            if (hasRemark) {
+            if (hasName) {
                 Text(
                     text = short,
                     style = MaterialTheme.typography.labelSmall,
