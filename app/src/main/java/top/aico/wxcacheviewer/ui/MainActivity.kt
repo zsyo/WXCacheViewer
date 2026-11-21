@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import top.aico.wxcacheviewer.data.image.CoilImageLoaders
 import top.aico.wxcacheviewer.data.log.AppLog
 import top.aico.wxcacheviewer.data.repository.SettingsRepository
 
@@ -16,6 +17,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         AppLog.init(this)
         AppLog.log("app", "MainActivity.onCreate")
+        CoilImageLoaders.init(this)
         val settings = SettingsRepository(this)
         setContent {
             MaterialTheme {

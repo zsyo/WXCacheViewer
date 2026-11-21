@@ -4,6 +4,28 @@ enum class FileType {
     MP4, JPEG, PNG, GIF, WEBP, UNKNOWN
 }
 
+/** 导出与媒体库扫描用的 MIME 类型。 */
+val FileType.mime: String
+    get() = when (this) {
+        FileType.MP4 -> "video/mp4"
+        FileType.JPEG -> "image/jpeg"
+        FileType.PNG -> "image/png"
+        FileType.GIF -> "image/gif"
+        FileType.WEBP -> "image/webp"
+        FileType.UNKNOWN -> "application/octet-stream"
+    }
+
+/** 导出文件的扩展名（缓存本体多数没有扩展名，导出时必须补上）。 */
+val FileType.extension: String
+    get() = when (this) {
+        FileType.MP4 -> "mp4"
+        FileType.JPEG -> "jpg"
+        FileType.PNG -> "png"
+        FileType.GIF -> "gif"
+        FileType.WEBP -> "webp"
+        FileType.UNKNOWN -> "bin"
+    }
+
 data class Account(
     val hash: String,
     val hasVideoCache: Boolean
@@ -11,12 +33,25 @@ data class Account(
 
 data class CacheFile(
     val accountHash: String,
+    /** 文件名（不含目录），多选徽标与列表第二行展示用。 */
     val name: String,
     val size: Long,
     /** 文件最后修改时间，Unix 秒；无法获取时为 0。 */
     val modifiedAt: Long,
-    val type: FileType
-)
+    val type: FileType,
+    /** 相对所属缓存源根目录的路径，可能包含子目录；旧数据回退为文件名。 */
+    val relativePath: String = name,
+    /** 所属缓存源，见 SourceRegistry。 */
+    val sourceId: String = "finder_video",
+    /** 同目录下是否有同名 jpg 首帧（聊天视频）。 */
+    val hasThumbnail: Boolean = false
+) {
+    /**
+     * 跨缓存源唯一的标识：列表 key、多选集合元素、图片缓存键都用它。
+     * 递归源里不同子目录可能出现同名文件，不能再用 name 当主键。
+     */
+    val key: String get() = "$sourceId:$relativePath"
+}
 
 enum class SortField {
     SIZE, MODIFIED_TIME

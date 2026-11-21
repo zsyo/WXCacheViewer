@@ -1,5 +1,9 @@
 package top.aico.wxcacheviewer.data.root
 
+import top.aico.wxcacheviewer.domain.source.CacheSource
+import top.aico.wxcacheviewer.domain.source.SourceRegistry
+import top.aico.wxcacheviewer.domain.source.SourceRoot
+
 object WxPaths {
     const val CACHE_ROOT = "/data/user/0/com.tencent.mm/cache"
     const val IDENTITY_ROOT = "/data/user/0/com.tencent.mm/files/identity_records"
@@ -23,6 +27,9 @@ object WxPaths {
 
     private val accountHashRegex = Regex("^[0-9a-f]{32}$")
     private val cacheFileNameRegex = Regex("^finder_video(?:_xWT[0-9]+)?__?[0-9a-f]{32}$")
+
+    /** 递归源扫描的行数上限，防止超大目录把 shell 输出撑爆内存。 */
+    private const val MAX_RECURSIVE_SCAN_LINES = 4000
 
     fun isValidAccountHash(value: String): Boolean = accountHashRegex.matches(value)
 
@@ -88,6 +95,156 @@ object WxPaths {
         val dest = shellQuote(destination)
         val destDir = shellQuote(destination.substringBeforeLast('/'))
         return "mkdir -p $destDir && cp -f $source $dest && chmod 0644 $dest && echo OK"
+    }
+
+    /** 缓存源在账号下的绝对目录，例如 `cache/<hash>/finder/video`、`MicroMsg/<hash>/emoji`。 */
+    fun sourceDir(hash: String, source: CacheSource): String {
+        require(isValidAccountHash(hash)) { "Invalid account hash: $hash" }
+        val root = when (source.root) {
+            SourceRoot.CACHE -> CACHE_ROOT
+            SourceRoot.MICROMSG -> MICROMSG_ROOT
+        }
+        return "$root/$hash/${source.relativeDir}"
+    }
+
+    /**
+     * 相对路径拼接成绝对路径。相对路径必须通过缓存源的白名单校验，
+     * 拼接后再断言一次前缀，防止出现 `..` 之类的越界写法。
+     */
+    fun sourceFilePath(hash: String, source: CacheSource, relativePath: String): String {
+        require(SourceRegistry.isValidRelativePath(source, relativePath)) {
+            "Invalid relative path: $relativePath"
+        }
+        val base = sourceDir(hash, source)
+        val full = "$base/$relativePath"
+        require(full.startsWith("$base/")) { "Invalid relative path: $relativePath" }
+        return full
+    }
+
+    /**
+     * 列出某个缓存源的文件。每行六个 tab 分隔字段：
+     * 文件名、字节数、mtime、文件头 hex（`-` 表示不探测）、相对路径、是否已有同名 jpg 首帧。
+     * 后两个字段是新增的，旧的四字段解析仍然兼容。
+     */
+    fun listSourceFilesCommand(
+        hash: String,
+        source: CacheSource,
+        useWcForSize: Boolean = false
+    ): String = if (source.recursive) {
+        recursiveListSourceCommand(hash, source)
+    } else {
+        flatListSourceCommand(hash, source, useWcForSize)
+    }
+
+    private fun flatListSourceCommand(
+        hash: String,
+        source: CacheSource,
+        useWcForSize: Boolean
+    ): String {
+        val dir = shellQuote(sourceDir(hash, source))
+        val sizeExpression = if (useWcForSize) {
+            "\$(wc -c < \"\$f\")"
+        } else {
+            "stat -c %s \"\$f\" 2>/dev/null || wc -c < \"\$f\""
+        }
+        val patterns = source.globs.joinToString(" ") { "$dir/$it" }
+        val headerExpression = if (source.probeHeader) {
+            "head -c 32 \"\$f\" | od -An -v -tx1 | tr -d ' \\n'"
+        } else {
+            "printf '%s' '-'"
+        }
+        val thumbExpression = if (source.hasJpegThumbnail) {
+            "\$([ -f \"\${f%.mp4}.jpg\" ] && echo 1 || echo 0)"
+        } else {
+            "0"
+        }
+        return listOf(
+            "for f in $patterns; do",
+            "  [ -f \"\$f\" ] || continue",
+            "  printf '%s\\t%s\\t%s\\t' \"\$(basename \"\$f\")\" \"\$($sizeExpression)\" \"\$(stat -c %Y \"\$f\" 2>/dev/null || echo 0)\"",
+            "  $headerExpression",
+            "  printf '\\t%s\\t%s\\n' \"\$(basename \"\$f\")\" \"$thumbExpression\"",
+            "done"
+        ).joinToString("\n")
+    }
+
+    /**
+     * 递归列出子目录中的文件。Android 的 toybox find 没有 `-printf`，
+     * 因此用 `find | while read` 配合 stat 输出；扫描行数设上限，避免超大目录把 stdout 撑爆。
+     */
+    private fun recursiveListSourceCommand(hash: String, source: CacheSource): String {
+        val dir = shellQuote(sourceDir(hash, source))
+        val names = source.findNames.joinToString(" -o ") { "-name ${shellQuote(it)}" }
+        val nameFilter = if (names.isEmpty()) "" else " \\( $names \\)"
+        return listOf(
+            "D=$dir",
+            "[ -d \"\$D\" ] || exit 0",
+            "find \"\$D\" -maxdepth ${source.maxDepth} -type f$nameFilter 2>/dev/null" +
+                " | head -n $MAX_RECURSIVE_SCAN_LINES" +
+                " | while IFS= read -r f; do",
+            "  rel=\${f#\"\$D\"/}",
+            "  st=\$(stat -c '%s %Y' \"\$f\" 2>/dev/null) || st='0 0'",
+            "  set -- \$st",
+            "  printf '%s\\t%s\\t%s\\t-\\t%s\\t0\\n' \"\${rel##*/}\" \"\$1\" \"\$2\" \"\$rel\"",
+            "done"
+        ).joinToString("\n")
+    }
+
+    fun copySourceFileCommand(
+        hash: String,
+        source: CacheSource,
+        relativePath: String,
+        destination: String
+    ): String {
+        val sourcePath = shellQuote(sourceFilePath(hash, source, relativePath))
+        val quotedDestination = shellQuote(destination)
+        return "cp $sourcePath $quotedDestination && chmod 0644 $quotedDestination"
+    }
+
+    /**
+     * 复制聊天视频的同名 jpg 首帧，省去解码视频取帧的开销。
+     * 首帧不存在时输出 MISSING，调用方据此回退到视频首帧。
+     */
+    fun copyChatVideoThumbnailCommand(
+        hash: String,
+        relativePath: String,
+        destination: String
+    ): String {
+        require(SourceRegistry.CHAT_VIDEO.relativePathRegex.matches(relativePath)) {
+            "Invalid chat video name: $relativePath"
+        }
+        val jpgPath = shellQuote(
+            "${sourceDir(hash, SourceRegistry.CHAT_VIDEO)}/${relativePath.removeSuffix(".mp4")}.jpg"
+        )
+        val quotedDestination = shellQuote(destination)
+        return listOf(
+            "[ -f $jpgPath ] || { echo $MISSING_MARK; exit 0; }",
+            "cp -f $jpgPath $quotedDestination && chmod 0644 $quotedDestination && echo OK"
+        ).joinToString("\n")
+    }
+
+    /** 删除单个缓存文件。成功后输出 OK，便于与“命令失败但退出码为 0”区分。 */
+    fun deleteSourceFileCommand(
+        hash: String,
+        source: CacheSource,
+        relativePath: String
+    ): String {
+        require(source.allowDelete) { "Source does not allow delete: ${source.id}" }
+        val path = shellQuote(sourceFilePath(hash, source, relativePath))
+        return "rm -f $path && if [ -e $path ]; then echo FAILED; else echo OK; fi"
+    }
+
+    /** 把缓存文件导出到 App 以外的目录（由 root 创建目录并复制）。 */
+    fun exportSourceFileCommand(
+        hash: String,
+        source: CacheSource,
+        relativePath: String,
+        destination: String
+    ): String {
+        val sourcePath = shellQuote(sourceFilePath(hash, source, relativePath))
+        val dest = shellQuote(destination)
+        val destDir = shellQuote(destination.substringBeforeLast('/'))
+        return "mkdir -p $destDir && cp -f $sourcePath $dest && chmod 0644 $dest && echo OK"
     }
 
     /**

@@ -14,10 +14,15 @@ import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.data.repository.CacheRepository
 import top.aico.wxcacheviewer.data.repository.GridMode
 import top.aico.wxcacheviewer.data.repository.SettingsRepository
+import top.aico.wxcacheviewer.data.repository.SourceListing
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
 import top.aico.wxcacheviewer.domain.CacheFileSorter
 import top.aico.wxcacheviewer.domain.model.CacheFile
 import top.aico.wxcacheviewer.domain.model.SortOption
+import top.aico.wxcacheviewer.domain.model.mime
+import top.aico.wxcacheviewer.domain.source.ExportKind
+import top.aico.wxcacheviewer.domain.source.SourceRegistry
+import top.aico.wxcacheviewer.domain.source.SourceTab
 import java.io.File
 
 /** 批量操作的种类，用于界面进度提示文案。 */
@@ -31,8 +36,11 @@ data class BatchProgress(
 )
 
 data class GalleryUiState(
+    val tab: SourceTab = SourceTab.FINDER,
     val loading: Boolean = true,
     val files: List<CacheFile> = emptyList(),
+    /** 递归源文件过多被截断时为 true，界面给出提示。 */
+    val truncated: Boolean = false,
     val gridMode: GridMode = GridMode.TWO,
     val sortOption: SortOption = SortOption(),
     val refreshing: Boolean = false,
@@ -42,15 +50,20 @@ data class GalleryUiState(
     val batchProgress: BatchProgress? = null,
     /** 是否处于多选模式；全不选后仍保持该状态，只有显式退出或删除完成才结束。 */
     val selectionMode: Boolean = false,
-    val selectedNames: Set<String> = emptySet(),
+    /** 已选文件的唯一 key（`源:相对路径`），跨目录同名文件不会互相覆盖。 */
+    val selectedKeys: Set<String> = emptySet(),
     /** 变化时列表回到顶部；用于排序、切号、刷新等显式操作，删除不触发。 */
     val resetScrollToken: Int = 0
 ) {
     val allSelected: Boolean
-        get() = files.isNotEmpty() && selectedNames.size == files.size
+        get() = files.isNotEmpty() && selectedKeys.size == files.size
 
     val actionBusy: Boolean
         get() = batchProgress != null
+
+    /** 聊天图片、朋友圈等只读源不提供删除。 */
+    val canDelete: Boolean
+        get() = tab.allowsDelete
 }
 
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
@@ -64,13 +77,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     )
     val uiState: StateFlow<GalleryUiState> = _uiState.asStateFlow()
 
-    fun load(accountHash: String) {
+    fun load(accountHash: String, tab: SourceTab) {
         viewModelScope.launch {
-            _uiState.update { it.copy(loading = true, error = null) }
+            _uiState.update { it.copy(tab = tab, loading = true, error = null) }
             try {
-                val files = repository.listFiles(accountHash)
+                val listing = repository.listFiles(accountHash, tab.sources)
                 _uiState.update {
-                    it.withFiles(files)
+                    it.withFiles(listing)
                         .copy(loading = false, resetScrollToken = it.resetScrollToken + 1)
                 }
             } catch (e: Exception) {
@@ -84,12 +97,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      */
     fun refresh(accountHash: String) {
         if (_uiState.value.refreshing) return
+        val tab = _uiState.value.tab
         viewModelScope.launch {
             _uiState.update { it.copy(refreshing = true, error = null) }
             try {
-                val files = repository.listFiles(accountHash)
+                val listing = repository.listFiles(accountHash, tab.sources)
                 _uiState.update {
-                    it.withFiles(files)
+                    it.withFiles(listing)
                         .copy(refreshing = false, resetScrollToken = it.resetScrollToken + 1)
                 }
             } catch (e: Exception) {
@@ -120,21 +134,21 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /** 长按进入多选模式，并把被长按的文件选中。 */
-    fun startSelection(name: String) {
+    fun startSelection(key: String) {
         _uiState.update {
-            it.copy(selectionMode = true, selectedNames = it.selectedNames + name)
+            it.copy(selectionMode = true, selectedKeys = it.selectedKeys + key)
         }
     }
 
-    fun toggleSelection(name: String) {
+    fun toggleSelection(key: String) {
         _uiState.update { state ->
             if (!state.selectionMode) return@update state
-            val next = if (name in state.selectedNames) {
-                state.selectedNames - name
+            val next = if (key in state.selectedKeys) {
+                state.selectedKeys - key
             } else {
-                state.selectedNames + name
+                state.selectedKeys + key
             }
-            state.copy(selectedNames = next)
+            state.copy(selectedKeys = next)
         }
     }
 
@@ -142,8 +156,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     fun toggleSelectAll() {
         _uiState.update { state ->
             if (!state.selectionMode) return@update state
-            val next = if (state.allSelected) emptySet() else state.files.mapTo(LinkedHashSet()) { it.name }
-            state.copy(selectedNames = next)
+            val next = if (state.allSelected) emptySet() else state.files.mapTo(LinkedHashSet()) { it.key }
+            state.copy(selectedKeys = next)
         }
     }
 
@@ -151,19 +165,22 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         _uiState.update { state ->
             if (!state.selectionMode) return@update state
             val next = state.files.mapNotNullTo(LinkedHashSet()) {
-                if (it.name in state.selectedNames) null else it.name
+                if (it.key in state.selectedKeys) null else it.key
             }
-            state.copy(selectedNames = next)
+            state.copy(selectedKeys = next)
         }
     }
 
     fun exitSelection() {
         _uiState.update {
-            if (!it.selectionMode) it else it.copy(selectionMode = false, selectedNames = emptySet())
+            if (!it.selectionMode) it else it.copy(selectionMode = false, selectedKeys = emptySet())
         }
     }
 
-    /** 批量导出到公共 Movies/WXCacheViewer 目录，并通知媒体库扫描，方便相册/播放器直接看到。 */
+    /**
+     * 批量导出：视频进 Movies/WXCacheViewer，图片与表情进 Pictures/WXCacheViewer，
+     * 完成后按每个文件各自的 MIME 通知媒体库扫描。
+     */
     @Suppress("DEPRECATION")
     fun exportSelected() {
         val current = _uiState.value
@@ -175,17 +192,18 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             _uiState.update {
                 it.copy(batchProgress = BatchProgress(BatchAction.EXPORT, 0, targets.size))
             }
-            val destinationDir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
-                EXPORT_DIR_NAME
-            )
-            val exportedPaths = ArrayList<String>(targets.size)
+            val paths = ArrayList<String>(targets.size)
+            val mimes = ArrayList<String>(targets.size)
+            val dirLabels = LinkedHashSet<String>()
             var failed = 0
             var lastError: String? = null
             var done = 0
             targets.forEach { file ->
                 try {
-                    exportedPaths += repository.exportFile(file, destinationDir).absolutePath
+                    val target = exportTarget(file)
+                    dirLabels += target.label
+                    paths += repository.exportFile(file, target.directory).absolutePath
+                    mimes += file.type.mime
                 } catch (e: Exception) {
                     failed++
                     lastError = e.message
@@ -193,11 +211,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 done++
                 publishProgress(BatchAction.EXPORT, done, targets.size)
             }
-            if (exportedPaths.isNotEmpty()) {
+            if (paths.isNotEmpty()) {
                 MediaScannerConnection.scanFile(
                     app,
-                    exportedPaths.toTypedArray(),
-                    Array(exportedPaths.size) { "video/mp4" },
+                    paths.toTypedArray(),
+                    mimes.toTypedArray(),
                     null
                 )
             }
@@ -205,20 +223,40 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 it.copy(
                     batchProgress = null,
                     notice = when {
-                        exportedPaths.isEmpty() ->
+                        paths.isEmpty() ->
                             app.getString(R.string.export_failed, lastError.orEmpty())
                         failed == 0 -> app.getString(
                             R.string.export_selected_success,
-                            exportedPaths.size,
-                            EXPORT_DIR_NAME
+                            paths.size,
+                            dirLabels.joinToString(" / ")
                         )
                         else -> app.getString(
                             R.string.export_selected_partial,
-                            exportedPaths.size,
+                            paths.size,
                             failed
                         )
                     }
                 )
+            }
+        }
+    }
+
+    /** 单文件导出，供图片预览页的保存按钮使用。 */
+    fun exportOne(file: CacheFile, onResult: (success: Boolean, message: String) -> Unit = { _, _ -> }) {
+        val app = getApplication<Application>()
+        viewModelScope.launch {
+            try {
+                val target = exportTarget(file)
+                val exported = repository.exportFile(file, target.directory)
+                MediaScannerConnection.scanFile(
+                    app,
+                    arrayOf(exported.absolutePath),
+                    arrayOf(file.type.mime),
+                    null
+                )
+                onResult(true, app.getString(R.string.export_one_success, exported.name))
+            } catch (e: Exception) {
+                onResult(false, app.getString(R.string.export_failed, e.message.orEmpty()))
             }
         }
     }
@@ -241,7 +279,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             targets.forEach { file ->
                 try {
                     repository.deleteFile(file)
-                    deleted += file.name
+                    deleted += file.key
                 } catch (e: Exception) {
                     failed++
                     lastError = e.message
@@ -250,13 +288,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                 publishProgress(BatchAction.DELETE, done, targets.size)
             }
             _uiState.update { state ->
-                val remaining = state.files.filterNot { it.name in deleted }
+                val remaining = state.files.filterNot { it.key in deleted }
                 state.copy(
                     batchProgress = null,
                     files = remaining,
                     selectionMode = failed > 0 && remaining.isNotEmpty(),
-                    selectedNames = if (failed > 0) {
-                        state.selectedNames.filterTo(HashSet()) { it !in deleted }
+                    selectedKeys = if (failed > 0) {
+                        state.selectedKeys.filterTo(HashSet()) { it !in deleted }
                     } else {
                         emptySet()
                     },
@@ -290,20 +328,37 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private fun GalleryUiState.selectedFiles(): List<CacheFile> =
-        files.filter { it.name in selectedNames }
+        files.filter { it.key in selectedKeys }
 
     /**
      * 换入新的文件列表：按当前排序规则重排，并把已不存在的文件从选中集合中剔除，
      * 避免刷新后残留无效选中项。
      */
-    private fun GalleryUiState.withFiles(files: List<CacheFile>): GalleryUiState {
-        val sorted = CacheFileSorter.sort(files, sortOption)
-        val names = sorted.mapTo(HashSet()) { it.name }
+    private fun GalleryUiState.withFiles(listing: SourceListing): GalleryUiState {
+        val sorted = CacheFileSorter.sort(listing.files, sortOption)
+        val keys = sorted.mapTo(HashSet()) { it.key }
         return copy(
             files = sorted,
-            selectedNames = selectedNames.filterTo(HashSet()) { it in names },
+            truncated = listing.truncated,
+            selectedKeys = selectedKeys.filterTo(HashSet()) { it in keys },
             selectionMode = selectionMode && sorted.isNotEmpty()
         )
+    }
+
+    private data class ExportTarget(val directory: File, val label: String)
+
+    @Suppress("DEPRECATION")
+    private fun exportTarget(file: CacheFile): ExportTarget {
+        val source = SourceRegistry.byId(file.sourceId)
+        val (publicDir, label) = when (source.exportKind) {
+            ExportKind.MOVIES -> Environment.DIRECTORY_MOVIES to "Movies"
+            ExportKind.PICTURES -> Environment.DIRECTORY_PICTURES to "Pictures"
+        }
+        val directory = File(
+            Environment.getExternalStoragePublicDirectory(publicDir),
+            EXPORT_DIR_NAME
+        )
+        return ExportTarget(directory, "$label/$EXPORT_DIR_NAME")
     }
 
     private companion object {

@@ -8,7 +8,7 @@ import top.aico.wxcacheviewer.domain.model.SortOption
 object CacheFileSorter {
 
     /**
-     * 按排序选项对缓存文件排序。取值相同时统一按文件名升序，保证结果稳定。
+     * 按排序选项对缓存文件排序。取值相同时统一按唯一 key 升序，保证结果稳定。
      */
     fun sort(files: List<CacheFile>, option: SortOption): List<CacheFile> {
         val byField = when (option.field) {
@@ -16,6 +16,6 @@ object CacheFileSorter {
             SortField.MODIFIED_TIME -> compareBy<CacheFile> { it.modifiedAt }
         }
         val ordered = if (option.direction == SortDirection.DESC) byField.reversed() else byField
-        return files.sortedWith(ordered.thenBy { it.name })
+        return files.sortedWith(ordered.thenBy { it.key })
     }
 }

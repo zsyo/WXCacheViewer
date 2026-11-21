@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import top.aico.wxcacheviewer.domain.source.SourceRegistry
 
 class WxPathsTest {
 
@@ -101,5 +102,51 @@ class WxPathsTest {
         assertTrue(lines[0].contains("last_login_nick_name"))
         assertTrue(lines[1].contains("last_login_uin"))
         assertTrue(command.contains("'${WxPaths.LOGIN_PREFS_FILE}'"))
+    }
+
+    @Test
+    fun chatVideoListCommandProbesJpgInsteadOfHeader() {
+        val command = WxPaths.listSourceFilesCommand(hash, SourceRegistry.CHAT_VIDEO)
+        assertTrue(command.contains("'${WxPaths.MICROMSG_ROOT}/$hash/video'/*.mp4"))
+        assertTrue(command.contains("\${f%.mp4}.jpg"))
+        assertFalse(command.contains("head -c 32"))
+    }
+
+    @Test
+    fun recursiveListCommandAvoidsPrintfAndLimitsDepth() {
+        val command = WxPaths.listSourceFilesCommand(hash, SourceRegistry.CHAT_IMAGE)
+        assertTrue(command.contains("find \"\$D\" -maxdepth 4 -type f"))
+        assertTrue(command.contains("-name 'th_*'"))
+        assertTrue(command.contains("stat -c '%s %Y'"))
+        assertTrue(command.contains("head -n 4000"))
+        assertFalse(command.contains("-printf"))
+    }
+
+    @Test
+    fun sourceFilePathRejectsTraversal() {
+        assertEquals(
+            "${WxPaths.MICROMSG_ROOT}/$hash/emoji/9213f8de4b8e6b5534fd84c15ddc358d_gif",
+            WxPaths.sourceFilePath(hash, SourceRegistry.EMOJI, "9213f8de4b8e6b5534fd84c15ddc358d_gif")
+        )
+        try {
+            WxPaths.sourceFilePath(hash, SourceRegistry.EMOJI, "../../evil_gif")
+            org.junit.Assert.fail("traversal should throw")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("Invalid relative path"))
+        }
+    }
+
+    @Test
+    fun deleteRejectsReadOnlySource() {
+        try {
+            WxPaths.deleteSourceFileCommand(
+                hash,
+                SourceRegistry.CHAT_IMAGE,
+                "00/09/th_9213f8de4b8e6b5534fd84c15ddc358d"
+            )
+            org.junit.Assert.fail("read-only source should throw")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("does not allow delete"))
+        }
     }
 }
