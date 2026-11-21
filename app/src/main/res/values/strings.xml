@@ -14,6 +14,13 @@
     <string name="cancel">取消</string>
     <string name="view_mode_list">列表视图</string>
     <string name="view_mode_grid">网格视图</string>
+    <string name="sort">排序</string>
+    <string name="sort_field_title">排序方式</string>
+    <string name="sort_field_size">文件大小</string>
+    <string name="sort_field_time">修改时间</string>
+    <string name="sort_direction_title">排序方向</string>
+    <string name="sort_direction_asc">正序</string>
+    <string name="sort_direction_desc">倒序</string>
     <string name="root_error_no_su">未检测到 root 权限，请确认设备已 root 并安装 su</string>
     <string name="root_error_denied">su 授权被拒绝，请在 Magisk 中允许本应用</string>
     <string name="root_error_timeout">root 授权超时，请重试</string>

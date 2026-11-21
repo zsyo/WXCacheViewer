@@ -1,6 +1,8 @@
 package top.aico.wxcacheviewer.data.repository
 
 import android.content.Context
+import top.aico.wxcacheviewer.domain.model.SortDirection
+import top.aico.wxcacheviewer.domain.model.SortField
 
 enum class GridMode { TWO, ONE }
 
@@ -24,6 +26,22 @@ class SettingsRepository(context: Context) {
             preferences.edit().putString(KEY_GRID_MODE, value.name).apply()
         }
 
+    var sortField: SortField
+        get() = SortField.entries.firstOrNull {
+            it.name == preferences.getString(KEY_SORT_FIELD, null)
+        } ?: SortField.MODIFIED_TIME
+        set(value) {
+            preferences.edit().putString(KEY_SORT_FIELD, value.name).apply()
+        }
+
+    var sortDirection: SortDirection
+        get() = SortDirection.entries.firstOrNull {
+            it.name == preferences.getString(KEY_SORT_DIRECTION, null)
+        } ?: SortDirection.DESC
+        set(value) {
+            preferences.edit().putString(KEY_SORT_DIRECTION, value.name).apply()
+        }
+
     fun getRemark(hash: String): String = preferences.getString("$KEY_REMARK$hash", "").orEmpty()
 
     fun setRemark(hash: String, value: String) {
@@ -33,6 +51,8 @@ class SettingsRepository(context: Context) {
     private companion object {
         const val KEY_SELECTED_ACCOUNT = "selected_account_hash"
         const val KEY_GRID_MODE = "grid_mode"
+        const val KEY_SORT_FIELD = "sort_field"
+        const val KEY_SORT_DIRECTION = "sort_direction"
         const val KEY_REMARK = "remark_"
     }
 }

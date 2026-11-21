@@ -21,10 +21,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -51,6 +54,9 @@ import top.aico.wxcacheviewer.data.root.RootCommandExecutor
 import top.aico.wxcacheviewer.data.thumbnail.ThumbnailLoader
 import top.aico.wxcacheviewer.domain.model.Account
 import top.aico.wxcacheviewer.domain.model.CacheFile
+import top.aico.wxcacheviewer.domain.model.SortDirection
+import top.aico.wxcacheviewer.domain.model.SortField
+import top.aico.wxcacheviewer.domain.model.SortOption
 import top.aico.wxcacheviewer.ui.account.AccountSwitchDialog
 import top.aico.wxcacheviewer.ui.common.ErrorView
 import top.aico.wxcacheviewer.ui.common.LoadingView
@@ -68,6 +74,7 @@ fun GalleryScreen(
     remarks: Map<String, String>,
     canSwitchAccount: Boolean,
     onSetGridMode: (GridMode) -> Unit,
+    onSetSortOption: (SortOption) -> Unit,
     onSwitchAccount: (String) -> Unit,
     onSaveRemark: (String, String) -> Unit,
     onRetry: () -> Unit
@@ -79,6 +86,7 @@ fun GalleryScreen(
     }
 
     var showSwitchDialog by remember { mutableStateOf(false) }
+    var showSortMenu by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -92,6 +100,25 @@ fun GalleryScreen(
                     )
                 },
                 actions = {
+                    Box {
+                        IconButton(onClick = { showSortMenu = true }) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_sort),
+                                contentDescription = stringResource(id = R.string.sort),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        SortMenu(
+                            expanded = showSortMenu,
+                            option = state.sortOption,
+                            onSelect = {
+                                onSetSortOption(it)
+                                showSortMenu = false
+                            },
+                            onDismiss = { showSortMenu = false }
+                        )
+                    }
+
                     val isListView = state.gridMode == GridMode.ONE
                     val nextMode = if (isListView) GridMode.TWO else GridMode.ONE
                     IconButton(onClick = { onSetGridMode(nextMode) }) {
@@ -148,6 +175,57 @@ fun GalleryScreen(
             onDismiss = { showSwitchDialog = false }
         )
     }
+}
+
+@Composable
+private fun SortMenu(
+    expanded: Boolean,
+    option: SortOption,
+    onSelect: (SortOption) -> Unit,
+    onDismiss: () -> Unit
+) {
+    DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        MenuSectionLabel(text = stringResource(id = R.string.sort_field_title))
+        SortField.entries.forEach { field ->
+            DropdownMenuItem(
+                text = { Text(text = stringResource(id = field.labelRes())) },
+                trailingIcon = {
+                    RadioButton(selected = option.field == field, onClick = null)
+                },
+                onClick = { onSelect(option.copy(field = field)) }
+            )
+        }
+        MenuSectionLabel(text = stringResource(id = R.string.sort_direction_title))
+        SortDirection.entries.forEach { direction ->
+            DropdownMenuItem(
+                text = { Text(text = stringResource(id = direction.labelRes())) },
+                trailingIcon = {
+                    RadioButton(selected = option.direction == direction, onClick = null)
+                },
+                onClick = { onSelect(option.copy(direction = direction)) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun MenuSectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)
+    )
+}
+
+private fun SortField.labelRes(): Int = when (this) {
+    SortField.SIZE -> R.string.sort_field_size
+    SortField.MODIFIED_TIME -> R.string.sort_field_time
+}
+
+private fun SortDirection.labelRes(): Int = when (this) {
+    SortDirection.ASC -> R.string.sort_direction_asc
+    SortDirection.DESC -> R.string.sort_direction_desc
 }
 
 @Composable

@@ -32,16 +32,16 @@ class CacheRepository(private val executor: RootCommandExecutor) {
         }
         result.stdout.lines()
             .mapNotNull { parseLine(hash, it) }
-            .sortedByDescending { it.name }
     }
 
     private fun parseLine(hash: String, line: String): CacheFile? {
         val parts = line.split('\t')
-        if (parts.size < 3) return null
+        if (parts.size < 4) return null
         val name = parts[0].trim()
         if (!WxPaths.isValidCacheFileName(name)) return null
         val size = parts[1].trim().toLongOrNull() ?: return null
-        val type = FileTypeDetector.detect(parts[2].trim())
-        return CacheFile(hash, name, size, type)
+        val modifiedAt = parts[2].trim().toLongOrNull() ?: 0L
+        val type = FileTypeDetector.detect(parts[3].trim())
+        return CacheFile(hash, name, size, modifiedAt, type)
     }
 }

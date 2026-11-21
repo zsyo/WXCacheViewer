@@ -52,6 +52,7 @@ class WxPathsTest {
         assertTrue(command.contains("head -c 32"))
         assertTrue(command.contains("od -An -v -tx1"))
         assertTrue(command.contains("stat -c %s"))
+        assertTrue(command.contains("stat -c %Y"))
         assertTrue(command.contains("'${WxPaths.CACHE_ROOT}/$hash/finder/video'/*"))
     }
 

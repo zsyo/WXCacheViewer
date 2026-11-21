@@ -50,7 +50,7 @@ object WxPaths {
         return listOf(
             "for f in $dir/*; do",
             "  [ -f \"\$f\" ] || continue",
-            "  printf '%s\\t%s\\t' \"\$(basename \"\$f\")\" \"$sizeExpression\"",
+            "  printf '%s\\t%s\\t%s\\t' \"\$(basename \"\$f\")\" \"$sizeExpression\" \"\$(stat -c %Y \"\$f\" 2>/dev/null || echo 0)\"",
             "  head -c 32 \"\$f\" | od -An -v -tx1 | tr -d ' \\n'",
             "  printf '\\n'",
             "done"
