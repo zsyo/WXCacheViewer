@@ -92,22 +92,15 @@ fun GalleryScreen(
                     )
                 },
                 actions = {
-                    val nextMode = if (state.gridMode == GridMode.TWO) GridMode.ONE else GridMode.TWO
+                    val isListView = state.gridMode == GridMode.ONE
+                    val nextMode = if (isListView) GridMode.TWO else GridMode.ONE
                     IconButton(onClick = { onSetGridMode(nextMode) }) {
                         Icon(
                             painter = painterResource(
-                                id = if (nextMode == GridMode.ONE) {
-                                    R.drawable.ic_view_list
-                                } else {
-                                    R.drawable.ic_view_grid
-                                }
+                                id = if (isListView) R.drawable.ic_view_list else R.drawable.ic_view_grid
                             ),
                             contentDescription = stringResource(
-                                id = if (nextMode == GridMode.ONE) {
-                                    R.string.view_mode_list
-                                } else {
-                                    R.string.view_mode_grid
-                                }
+                                id = if (isListView) R.string.view_mode_list else R.string.view_mode_grid
                             ),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
