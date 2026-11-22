@@ -93,7 +93,7 @@ Android 16 及以上系统对应用数据目录做了更强的隔离，直接在
 
 环境：
 
-- JDK 21（运行 Gradle；源码编译目标仍是 Java 17）
+- JDK 25（运行 Gradle；字节码目标 Java 17）
 - Android SDK Platform 37.0、Build-Tools 37.0.0（Compose 1.12 / Coil 3.6 要求 compileSdk 37；平台包从 Android 16 QPR 起带 minor 版本号，安装名是 `platforms;android-37.0`）
 
 ```bash
@@ -120,7 +120,7 @@ Android 16 及以上系统对应用数据目录做了更强的隔离，直接在
 
 四个包的 `versionCode` 按 ABI 分段（如 `2xxxx` 为 arm64），互不冲突；GitHub Release 会把四个包一并作为附件发布，按设备架构下载即可。
 
-`gradle.properties` 中有一行 `org.gradle.java.home`，指向开发机上的 JDK 21 绝对路径。如果你本机路径不同，请改成自己的路径或直接删除该行并设置 `JAVA_HOME`。同理，`local.properties` 里的 `sdk.dir` 需要指向你自己的 SDK 位置（该文件已被 `.gitignore` 排除）。CI 会自动删掉 `org.gradle.java.home` 这一行，无需为 Linux runner 手动改仓库文件。
+运行 Gradle 的 JDK 统一由 `JAVA_HOME` 指定（仓库不再写死 `org.gradle.java.home`）。JDK 25 下建议再设置 `GRADLE_OPTS=--enable-native-access=ALL-UNNAMED`，用于消除 Gradle launcher 的 native-platform 警告；`org.gradle.jvmargs` 里也已为 daemon 加上同名参数。同理，`local.properties` 里的 `sdk.dir` 需要指向你自己的 SDK 位置（该文件已被 `.gitignore` 排除）。CI 通过 `setup-java` 安装同版本 JDK，无需为 Linux runner 手动改仓库文件。
 
 本地要打**签名**发布包，在根目录建一个 `keystore.properties`（已被 `.gitignore` 排除，不会进仓库）：
 
@@ -137,7 +137,7 @@ keyPassword=你的密码
 
 ## GitHub Actions 自动构建与发布
 
-推送 `v` 开头的 tag（如 `v0.1.0`）会触发 `.github/workflows/release.yml`：自动装 JDK 21 与 NDK 28.2.13676358 / CMake 3.22.1，跑单测与 lint，用密钥签名后产出四个 ABI 包，逐个校验签名与 16 KB 页对齐，最后把四个 APK 一并附到对应的 GitHub Release 上。也可在 Actions 页面手动触发来验证流水线，手动触发不发布 Release。
+推送 `v` 开头的 tag（如 `v0.1.0`）会触发 `.github/workflows/release.yml`：自动装 JDK 25 与 NDK 28.2.13676358 / CMake 3.22.1，跑单测与 lint，用密钥签名后产出四个 ABI 包，逐个校验签名与 16 KB 页对齐，最后把四个 APK 一并附到对应的 GitHub Release 上。也可在 Actions 页面手动触发来验证流水线，手动触发不发布 Release。
 
 首次接入按下面步骤做一次：
 
