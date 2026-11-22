@@ -49,7 +49,7 @@ object ExportNaming {
 
     private fun shortDigest(value: String): String =
         MessageDigest.getInstance("SHA-1")
-            .digest(value.toByteArray())
-            .joinToString("") { "%02x".format(it) }
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { String.format(Locale.US, "%02x", it) }
             .take(8)
 }

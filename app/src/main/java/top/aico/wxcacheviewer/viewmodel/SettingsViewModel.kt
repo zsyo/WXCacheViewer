@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,17 +45,19 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     )
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
-    private var scanJob: Job? = null
+    /** 扫描代次：被新一次扫描取代的旧结果直接丢弃，不写回状态。 */
+    private var scanGeneration = 0
 
     init {
         refreshCacheSize()
     }
 
     fun refreshCacheSize() {
-        scanJob?.cancel()
+        val generation = ++scanGeneration
         _uiState.update { it.copy(cacheScanning = true) }
-        scanJob = viewModelScope.launch {
+        viewModelScope.launch {
             val size = withContext(Dispatchers.IO) { sizeOf(cacheDir) }
+            if (generation != scanGeneration) return@launch
             _uiState.update { it.copy(cacheBytes = size, cacheScanning = false) }
         }
     }
@@ -88,12 +89,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     fun clearCache() {
         if (_uiState.value.cacheClearing) return
+        // 清理会改变缓存大小，作废旧扫描，避免它晚返回时覆盖清理后的结果
+        scanGeneration++
         _uiState.update { it.copy(cacheClearing = true) }
         viewModelScope.launch {
             val (freed, remaining) = withContext(Dispatchers.IO) {
                 val before = sizeOf(cacheDir)
                 cacheDir.listFiles()?.forEach { it.deleteRecursively() }
-                before - sizeOf(cacheDir) to sizeOf(cacheDir)
+                val after = sizeOf(cacheDir)
+                before - after to after
             }
             val app = getApplication<Application>()
             _uiState.update {

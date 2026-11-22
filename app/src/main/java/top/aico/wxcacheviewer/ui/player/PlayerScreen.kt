@@ -42,6 +42,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,7 +53,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -112,14 +112,35 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
 
     BackHandler(onBack = onClose)
 
-    DisposableEffect(videoPlayer) {
-        videoPlayer.setVolume(volume)
-        onDispose { videoPlayer.release() }
-    }
-
     val keepControlsVisible: () -> Unit = {
         controlsVisible = true
         interactionTick++
+    }
+
+    // 播放器回调只在 effect 里设置一次。此前写在 composable 主体里，进度每次更新
+    // 都会重新赋值一遍回调，属于组合阶段的副作用；用 rememberUpdatedState 让回调
+    // 始终读到最新状态，同时避免重复赋值。
+    val latestDuration by rememberUpdatedState(durationMs)
+    val latestResources by rememberUpdatedState(resources)
+    val latestKeepControls by rememberUpdatedState(keepControlsVisible)
+    DisposableEffect(videoPlayer) {
+        videoPlayer.setVolume(volume)
+        videoPlayer.onPrepared = {
+            durationMs = videoPlayer.durationMs().toLong()
+            ready = true
+            controlsVisible = true
+        }
+        videoPlayer.onPlayingChanged = { playing -> isPlaying = playing }
+        videoPlayer.onCompletion = {
+            isPlaying = false
+            positionMs = latestDuration
+            latestKeepControls()
+        }
+        videoPlayer.onError = { message ->
+            error = latestResources.getString(R.string.player_play_failed_generic, message)
+            isPlaying = false
+        }
+        onDispose { videoPlayer.release() }
     }
 
     LaunchedEffect(file.name) {
@@ -133,22 +154,6 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
             error = e.message ?: resources.getString(R.string.player_prepare_failed)
         }
         copying = false
-    }
-
-    videoPlayer.onPrepared = {
-        durationMs = videoPlayer.durationMs().toLong()
-        ready = true
-        controlsVisible = true
-    }
-    videoPlayer.onPlayingChanged = { playing -> isPlaying = playing }
-    videoPlayer.onCompletion = {
-        isPlaying = false
-        positionMs = durationMs
-        keepControlsVisible()
-    }
-    videoPlayer.onError = { message ->
-        error = resources.getString(R.string.player_play_failed_generic, message)
-        isPlaying = false
     }
 
     LaunchedEffect(controlsVisible, isPlaying, interactionTick, volumePanelVisible) {

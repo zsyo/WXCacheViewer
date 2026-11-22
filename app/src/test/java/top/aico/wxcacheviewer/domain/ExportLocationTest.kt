@@ -35,6 +35,15 @@ class ExportLocationTest {
     }
 
     @Test
+    fun rejectsIllegalVolume() {
+        // volume 会拼进 /storage/$volume，含点或斜杠会造成路径遍历
+        assertNull(ExportLocation.resolve("..:Download/WXCacheViewer"))
+        assertNull(ExportLocation.resolve("../etc:Download"))
+        assertNull(ExportLocation.resolve("a/b:Download"))
+        assertNull(ExportLocation.resolve(":Download"))
+    }
+
+    @Test
     fun displayNameUsesLastSegment() {
         assertEquals("WXCacheViewer", ExportLocation.displayName("/storage/emulated/0/Download/WXCacheViewer/"))
         assertEquals("Download", ExportLocation.displayName("/storage/emulated/0/Download"))

@@ -46,6 +46,17 @@ class ExportNamingTest {
     }
 
     @Test
+    fun chatFileSanitizesIllegalNames() {
+        // preserveFileName 分支必须把路径分隔符变成下划线，并拒绝 . / .. 与空白名
+        assertEquals("a_b", ExportNaming.nameFor(file("a/b", sourceId = "chat_file"), "bin"))
+        assertEquals("a_b", ExportNaming.nameFor(file("a\\b", sourceId = "chat_file"), "bin"))
+        assertEquals("ok", ExportNaming.nameFor(file("  ok  ", sourceId = "chat_file"), "bin"))
+        // . 与 .. 非法，回退到带标签时间戳的生成名
+        assertTrue(ExportNaming.nameFor(file("..", sourceId = "chat_file"), "bin").startsWith("wx"))
+        assertTrue(ExportNaming.nameFor(file(".", sourceId = "chat_file"), "bin").startsWith("wx"))
+    }
+
+    @Test
     fun chatFileKeepsOriginalNameAndAvoidsOverwrite() {
         val exported = file("项目资料 归档.zip", sourceId = "chat_file", modifiedAt = 0L)
         assertEquals("项目资料 归档.zip", ExportNaming.nameFor(exported, "zip"))
@@ -58,7 +69,6 @@ class ExportNamingTest {
             "项目资料 归档(2).zip",
             ExportNaming.uniqueDestination(dir, "项目资料 归档.zip").name
         )
-        dir.deleteRecursively()
-        Unit
+        check(dir.deleteRecursively())
     }
 }

@@ -85,7 +85,14 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     /** 下一页的游标；null 表示没有更多。 */
     private var cursor: PageCursor? = null
 
+    /**
+     * 加载代次。每次 load/refresh 递增；在飞的 loadMore 返回时若代次已变就丢弃结果。
+     * 否则「下拉刷新 + 旧 loadMore 并发」会让旧页数据混进新列表、游标错乱、重复或跳页。
+     */
+    private var loadGeneration = 0
+
     fun load(accountHash: String, tab: SourceTab) {
+        val generation = ++loadGeneration
         viewModelScope.launch {
             repository.invalidate()
             cursor = null
@@ -103,6 +110,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             }
             try {
                 val page = repository.loadPage(accountHash, tab.sources, null)
+                if (generation != loadGeneration) return@launch
                 cursor = page.nextCursor
                 _uiState.update {
                     it.copy(
@@ -114,6 +122,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
             } catch (e: Exception) {
+                if (generation != loadGeneration) return@launch
                 _uiState.update { it.copy(loading = false, error = e.message ?: "读取缓存文件失败") }
             }
         }
@@ -125,15 +134,17 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     fun loadMore(accountHash: String) {
         val state = _uiState.value
         val next = cursor
-        if (state.loading || state.loadingMore || next == null) return
+        if (state.loading || state.loadingMore || state.refreshing || next == null) return
+        val generation = loadGeneration
         viewModelScope.launch {
             _uiState.update { it.copy(loadingMore = true) }
             try {
                 val page = repository.loadPage(accountHash, state.tab.sources, next)
+                if (generation != loadGeneration) return@launch
                 cursor = page.nextCursor
-                _uiState.update {
-                    val merged = it.files + sortPage(page.files, it.sortOption)
-                    it.copy(
+                _uiState.update { current ->
+                    val merged = current.files + sortPage(page.files, current.sortOption)
+                    current.copy(
                         files = merged,
                         loadingMore = false,
                         hasMore = page.nextCursor != null,
@@ -141,6 +152,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
             } catch (e: Exception) {
+                if (generation != loadGeneration) return@launch
                 _uiState.update {
                     it.copy(loadingMore = false, error = e.message ?: "读取缓存文件失败")
                 }
@@ -153,13 +165,18 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      */
     fun refresh(accountHash: String) {
         if (_uiState.value.refreshing) return
+        // 递增代次使在飞的 loadMore 失效；它返回时会自行丢弃结果。
+        val generation = ++loadGeneration
         val tab = _uiState.value.tab
         viewModelScope.launch {
-            _uiState.update { it.copy(refreshing = true, error = null) }
+            _uiState.update {
+                it.copy(refreshing = true, loadingMore = false, error = null)
+            }
             repository.invalidate()
             cursor = null
             try {
                 val page = repository.loadPage(accountHash, tab.sources, null)
+                if (generation != loadGeneration) return@launch
                 cursor = page.nextCursor
                 _uiState.update {
                     it.copy(
@@ -171,6 +188,7 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
             } catch (e: Exception) {
+                if (generation != loadGeneration) return@launch
                 _uiState.update {
                     it.copy(refreshing = false, error = e.message ?: "刷新缓存文件失败")
                 }

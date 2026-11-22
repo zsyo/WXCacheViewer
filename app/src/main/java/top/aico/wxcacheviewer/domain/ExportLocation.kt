@@ -26,12 +26,15 @@ object ExportLocation {
 
     private const val PRIMARY_VOLUME = "primary"
     private const val PRIMARY_ROOT = "/storage/emulated/0"
+    private val VOLUME_PATTERN = Regex("^[A-Za-z0-9_-]{1,32}$")
 
     /** 解析成功返回绝对路径；整卷根目录、格式异常或含非法段时返回 null。 */
     fun resolve(documentId: String): String? {
         val separator = documentId.indexOf(':')
         if (separator <= 0 || separator == documentId.lastIndex) return null
         val volume = documentId.substring(0, separator)
+        // volume 会被拼进 "/storage/$volume"，同样要防路径遍历，不能只校验 relative 段
+        if (!VOLUME_PATTERN.matches(volume)) return null
         val relative = documentId.substring(separator + 1).trim('/')
         if (relative.isEmpty()) return null
         if (relative.split('/').any { it.isEmpty() || it == "." || it == ".." }) return null

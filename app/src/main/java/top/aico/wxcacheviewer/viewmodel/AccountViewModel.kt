@@ -3,6 +3,7 @@ package top.aico.wxcacheviewer.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,10 +37,26 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
     private val _uiState = MutableStateFlow(AccountUiState())
     val uiState: StateFlow<AccountUiState> = _uiState.asStateFlow()
 
+    /** 防重入：首次进入与「重试」点击可能并发，旧响应会覆盖刚保存的备注和账号状态。 */
+    private var refreshJob: Job? = null
+
     fun refresh() {
-        viewModelScope.launch {
+        refreshJob?.cancel()
+        refreshJob = viewModelScope.launch {
             _uiState.update { it.copy(loading = true, error = null, diagnostics = null) }
-            val root = repository.checkRoot()
+            val root = try {
+                repository.checkRoot()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        loading = false,
+                        error = e.message ?: "检查 root 权限失败"
+                    )
+                }
+                return@launch
+            }
             AppLog.log("account", "rootState=$root")
             if (root is RootState.Unavailable) {
                 val diagnostics = RootDiagnostics.collect(getApplication(), executor)
@@ -69,6 +86,9 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
                 // 昵称解析要逐个账号复制数据库，先让列表出来，识别到再回填，避免卡住首屏。
                 val autoNames = nameRepository.resolveNames(accounts)
                 _uiState.update { it.copy(autoNames = autoNames) }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // 被新的 refresh 取消，直接退出，不能覆盖新一次的状态
+                throw e
             } catch (e: Exception) {
                 val diagnostics = RootDiagnostics.collect(getApplication(), executor)
                 _uiState.update {

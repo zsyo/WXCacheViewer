@@ -144,34 +144,49 @@ open class RootCommandExecutor {
             val outThread = startReader(process.inputStream, stdout, "stdout")
             val errThread = startReader(process.errorStream, stderr, "stderr")
 
-            val finished = withTimeoutOrNull(timeoutMs) {
-                runInterruptible { process.waitFor() }
-            }
+            // 外层协程取消（切账号、退出页面）会抛 CancellationException 穿透 withTimeoutOrNull，
+            // 若只在超时分支清理，su 子进程会残留。用 finally 保证任何路径都回收进程与管道。
+            try {
+                val finished = withTimeoutOrNull(timeoutMs) {
+                    runInterruptible { process.waitFor() }
+                }
 
-            if (finished == null) {
+                if (finished == null) {
+                    // 先终止进程并等读取线程收尾，再取已读到的部分输出；finally 里的清理是兜底。
+                    // destroy() 是 API 1 方法；isAlive/destroyForcibly 要 API 26，minSdk 24 用不了。
+                    process.destroy()
+                    closeQuietly(process.inputStream)
+                    closeQuietly(process.errorStream)
+                    outThread.join(READER_DRAIN_TIMEOUT_MS)
+                    errThread.join(READER_DRAIN_TIMEOUT_MS)
+                    AppLog.log("shell", "timeout after ${timeoutMs}ms, kept=${stdout.length}B")
+                    return@withContext ShellResult(
+                        stdout.toString(),
+                        -1,
+                        TIMEOUT_MESSAGE,
+                        timedOut = true
+                    )
+                }
+
+                outThread.join()
+                errThread.join()
+                val result = ShellResult(stdout.toString(), process.exitValue(), stderr.toString())
+                AppLog.log(
+                    "shell",
+                    "exit=${result.exitCode} out=${result.stdout.take(600).replace("\n", " ⏎ ")} " +
+                        "err=${result.stderr.take(300).replace("\n", " ⏎ ")}"
+                )
+                result
+            } finally {
+                // 正常结束时进程已退出，destroy() 对已退出进程无害；取消/异常时靠它回收。
                 process.destroy()
                 closeQuietly(process.inputStream)
                 closeQuietly(process.errorStream)
-                outThread.join(READER_DRAIN_TIMEOUT_MS)
-                errThread.join(READER_DRAIN_TIMEOUT_MS)
-                AppLog.log("shell", "timeout after ${timeoutMs}ms, kept=${stdout.length}B")
-                return@withContext ShellResult(
-                    stdout.toString(),
-                    -1,
-                    TIMEOUT_MESSAGE,
-                    timedOut = true
-                )
+                // 超时/取消时读取线程可能仍阻塞在已关闭的管道上，短暂等待后返回，
+                // StringBuffer 的写入是同步的，已收到的输出不会丢。
+                if (outThread.isAlive) outThread.join(READER_DRAIN_TIMEOUT_MS)
+                if (errThread.isAlive) errThread.join(READER_DRAIN_TIMEOUT_MS)
             }
-
-            outThread.join()
-            errThread.join()
-            val result = ShellResult(stdout.toString(), process.exitValue(), stderr.toString())
-            AppLog.log(
-                "shell",
-                "exit=${result.exitCode} out=${result.stdout.take(600).replace("\n", " ⏎ ")} " +
-                    "err=${result.stderr.take(300).replace("\n", " ⏎ ")}"
-            )
-            result
         }
 
     private fun startReader(stream: InputStream, sink: StringBuffer, label: String): Thread =

@@ -222,6 +222,29 @@ class CacheRepositoryTest {
     }
 
     @Test
+    fun timeoutAdvancesCursorOnlyByLinesActuallyRead() = runBlocking {
+        // 超时只输出了 2 行就中断；游标必须推进 2 而不是整页 5，
+        // 否则中间 3 个文件在本次会话里永远翻不到。
+        val small = SourceRegistry.CHAT_VIDEO.copy(pageSize = 5)
+        val executor = RoutingExecutor { command ->
+            ShellResult(
+                listOf(
+                    videoLine("2609251653228091.mp4", 1795000001),
+                    videoLine("2609251653228092.mp4", 1795000002)
+                ).joinToString("\n"),
+                -1,
+                "命令超时",
+                timedOut = true
+            )
+        }
+        val page = CacheRepository(executor).loadPage(hash, listOf(small), null)
+
+        assertEquals(2, page.files.size)
+        assertEquals(PageCursor(0, 2), page.nextCursor)
+        assertTrue(page.error!!.contains("超时"))
+    }
+
+    @Test
     fun flatSourcePageUsesSourcePageSize() = runBlocking {
         val executor = FakeExecutor(ShellResult("", 0, ""))
         CacheRepository(executor).loadPage(hash, listOf(SourceRegistry.EMOJI), null)
@@ -233,7 +256,8 @@ class CacheRepositoryTest {
     }
 
     @Test
-    fun fallsBackToDirNamesWhenStatLacksNamePlaceholder() = runBlocking {        val executor = RoutingExecutor { command ->
+    fun fallsBackToDirNamesWhenStatLacksNamePlaceholder() = runBlocking {
+        val executor = RoutingExecutor { command ->
             when {
                 // 模拟 stat 不支持 %n：一行都解析不出来
                 command.contains("stat -c '%Y %n'") -> ShellResult("", 0, "")

@@ -83,6 +83,7 @@ import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.data.audio.VoicePlayer
 import top.aico.wxcacheviewer.data.audio.VoicePreparer
 import top.aico.wxcacheviewer.data.image.CoilImageLoaders
+import top.aico.wxcacheviewer.data.log.AppLog
 import top.aico.wxcacheviewer.data.media.MediaPreparer
 import top.aico.wxcacheviewer.data.repository.GridMode
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
@@ -182,7 +183,9 @@ fun GalleryScreen(
         onDispose { voicePlayer.release() }
     }
 
-    // 切标签或换账号时停掉正在播的语音，避免在别的页面继续出声
+    // 切标签或换账号时清理所有预览态：停语音、关闭视频播放与图片预览、取消待打开文件。
+    // GalleryScreen 本身不随 tab/账号退出组合，这些 remember 状态会残留；
+    // 尤其 openingKey 不清，新列表里同 key 的条目会短暂显示错误的 loading。
     LaunchedEffect(state.tab.id, accountHash) {
         voicePlayer.stop()
         voiceKey = null
@@ -190,6 +193,9 @@ fun GalleryScreen(
         voicePlaying = false
         voicePositionMs = 0L
         voiceDurationMs = 0L
+        playingFile = null
+        previewKey = null
+        openingKey = null
     }
 
     LaunchedEffect(voicePlaying, voiceKey) {
@@ -834,13 +840,28 @@ private fun CacheFileTile(
         initialValue = null,
         key1 = file.key
     ) {
-        if (isVideo) value = thumbnailLoader.load(file)
+        // producer 里的异常会直接抛到组合，导致整屏崩溃；在这里兜住，失败就显示占位图
+        if (isVideo) {
+            value = try {
+                thumbnailLoader.load(file)
+            } catch (e: Exception) {
+                AppLog.log("gallery", "thumbnail failed ${file.key}: ${e.message}")
+                null
+            }
+        }
     }
     val previewImage by produceState<File?>(
         initialValue = null,
         key1 = file.key
     ) {
-        if (!isVideo) value = preparer.prepare(file)
+        if (!isVideo) {
+            value = try {
+                preparer.prepare(file)
+            } catch (e: Exception) {
+                AppLog.log("gallery", "preview prepare failed ${file.key}: ${e.message}")
+                null
+            }
+        }
     }
 
     val shape = CardDefaults.shape

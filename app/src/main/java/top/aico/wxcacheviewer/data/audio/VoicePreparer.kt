@@ -1,6 +1,7 @@
 package top.aico.wxcacheviewer.data.audio
 
 import android.content.Context
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -107,19 +108,19 @@ class VoicePreparer(
      */
     private fun normalizeSilk(file: CacheFile, raw: File): SilkInput? {
         val bytes = raw.readBytes()
-        val kind = VoiceFormat.kindOf(bytes)
-        if (kind == VoiceFormat.Kind.AMR) return null
-        val silk = File(rawDir, "${cacheId(file)}.silk")
-        if (kind == VoiceFormat.Kind.SILK && silk.isFile && silk.length() == bytes.size.toLong()) {
-            return SilkInput(silk, VoiceFormat.durationMillisOfStandardSilk(bytes))
-        }
+        if (VoiceFormat.kindOf(bytes) == VoiceFormat.Kind.AMR) return null
         val standard = try {
             VoiceFormat.toStandardSilk(bytes)
         } catch (e: IllegalArgumentException) {
             AppLog.log("voice", "unknown format ${file.relativePath} head=${bytes.take(4)}")
             throw IllegalStateException("无法识别的语音格式")
         }
-        silk.writeBytes(standard)
+        // 微信私有封装的语音剥头后比原始字节少 1 字节，缓存长度要按剥头后的标准流判断，
+        // 否则这类语音永远命中不了缓存，每次播放/导出都重写一遍标准 SILK。
+        val silk = File(rawDir, "${cacheId(file)}.silk")
+        if (!silk.isFile || silk.length() != standard.size.toLong()) {
+            silk.writeBytes(standard)
+        }
         return SilkInput(silk, VoiceFormat.durationMillisOfStandardSilk(standard))
     }
 
@@ -131,24 +132,30 @@ class VoicePreparer(
      * 没有把内部采样率重采样过来，再按 16kHz 解一遍覆盖。
      * 最终采用的采样率记在 `.rate` 旁注文件里，下次命中缓存就不必重复校验。
      */
+    /**
+     * 解码成 wav 并探测采样率。
+     *
+     * SILK 头里不记录采样率，先按 24kHz 解，用「帧数 × 20ms」的期望时长校验，
+     * 偏差过大再按 16kHz 重解。最终采样率写入 `.rate` 旁注，供导出复用。
+     * wav 文件名带采样率：16kHz 改判后不会命中旧的 24kHz 产物。
+     */
     private suspend fun decodeWav(file: CacheFile, silk: SilkInput): File {
         decodedDir.mkdirs()
-        val wav = File(decodedDir, "${cacheId(file)}.wav")
         val rateNote = File(decodedDir, "${cacheId(file)}.rate")
-        val expected = silk.expectedDurationMs
-
-        if (wav.isFile && wav.length() > HEADER_BYTES) {
-            val cachedRate = rateNote.readRate() ?: SAMPLE_RATE
-            if (expected <= 0L || durationMatches(wav, cachedRate, expected)) {
-                wav.setLastModified(System.currentTimeMillis())
-                return wav
+        val cachedRate = rateNote.readRate()
+        if (cachedRate != null) {
+            val cached = File(decodedDir, "${cacheId(file)}_$cachedRate.wav")
+            if (cached.isFile && cached.length() > HEADER_BYTES) {
+                cached.setLastModified(System.currentTimeMillis())
+                return cached
             }
-            wav.delete()
-            rateNote.delete()
         }
 
+        val expected = silk.expectedDurationMs
         var rate = SAMPLE_RATE
-        var decoded = runDecode(file, silk.file, wav, rate, "wav")
+        var decoded = runDecode(
+            file, silk.file, File(decodedDir, "${cacheId(file)}_$rate.wav"), rate, "wav"
+        )
         if (expected > 0L && !durationMatches(decoded, rate, expected)) {
             AppLog.log(
                 "voice",
@@ -157,37 +164,30 @@ class VoicePreparer(
             )
             decoded.delete()
             rate = FALLBACK_SAMPLE_RATE
-            decoded = runDecode(file, silk.file, wav, rate, "wav")
+            decoded = runDecode(
+                file, silk.file, File(decodedDir, "${cacheId(file)}_$rate.wav"), rate, "wav"
+            )
         }
         rateNote.writeText(rate.toString())
         return decoded
     }
 
-    private suspend fun decodeMp3(file: CacheFile, silk: SilkInput): File = decode(
-        file = file,
-        input = silk.file,
-        extension = "mp3",
-        rate = File(decodedDir, "${cacheId(file)}.rate").readRate() ?: SAMPLE_RATE
-    ) { input, output, rate ->
-        SilkCodec.decodeToMp3(input.absolutePath, output.absolutePath, rate, MP3_BITRATE) == 0
-    }
-
-    /** 解码到私有缓存目录；同一文件的产物会被复用，重复播放不必重新解码。 */
-    private suspend fun decode(
-        file: CacheFile,
-        input: File,
-        extension: String,
-        rate: Int = SAMPLE_RATE,
-        convert: (File, File, Int) -> Boolean
-    ): File {
+    /**
+     * 导出成 mp3。必须先按 [decodeWav] 的探测结果取采样率——此前直接读 `.rate` 旁注，
+     * 而旁注只在播放过后才生成，未播放就导出 16kHz 语音会固定按 24kHz 编码，
+     * 导致时长减半、音调升高。mp3 文件名同样带采样率，避免改判后命中旧产物。
+     */
+    private suspend fun decodeMp3(file: CacheFile, silk: SilkInput): File {
+        decodeWav(file, silk) // 确保采样率已探测并写入旁注；命中缓存时几乎无开销
+        val rate = File(decodedDir, "${cacheId(file)}.rate").readRate() ?: SAMPLE_RATE
+        val output = File(decodedDir, "${cacheId(file)}_${rate}.mp3")
         decodedDir.mkdirs()
-        val output = File(decodedDir, "${cacheId(file)}.$extension")
         if (output.isFile && output.length() > HEADER_BYTES) {
             output.setLastModified(System.currentTimeMillis())
             return output
         }
-        return runDecode(file, input, output, rate, extension) { source, target ->
-            convert(source, target, rate)
+        return runDecode(file, silk.file, output, rate, "mp3") { source, target ->
+            SilkCodec.decodeToMp3(source.absolutePath, target.absolutePath, rate, MP3_BITRATE) == 0
         }
     }
 
@@ -209,6 +209,10 @@ class VoicePreparer(
         val started = System.currentTimeMillis()
         try {
             convert(input, output)
+        } catch (e: CancellationException) {
+            // 协程取消必须原样向上抛，结构化并发要靠它传播；不能包装成业务异常。
+            output.delete()
+            throw e
         } catch (e: Throwable) {
             output.delete()
             AppLog.log("voice", "decode $extension failed ${file.relativePath}: ${e.message}")
@@ -246,8 +250,8 @@ class VoicePreparer(
 
     private fun cacheId(file: CacheFile): String =
         MessageDigest.getInstance("SHA-1")
-            .digest("${file.key}#${file.size}".toByteArray())
-            .joinToString("") { "%02x".format(it) }
+            .digest("${file.key}#${file.size}".toByteArray(Charsets.UTF_8))
+            .joinToString("") { String.format(java.util.Locale.US, "%02x", it) }
             .take(16)
 
     /** 只保留最近使用的若干个中间文件，避免私有目录无限增长。 */

@@ -12,8 +12,13 @@ class CacheFileSorterTest {
 
     private val hash = "ffdef473a3a56cbf6d38456a41f52f46"
 
-    private fun file(name: String, size: Long, modifiedAt: Long) =
-        CacheFile(hash, name, size, modifiedAt, FileType.MP4)
+    private fun file(
+        name: String,
+        size: Long,
+        modifiedAt: Long,
+        sourceId: String = "finder_video",
+        relativePath: String = name
+    ) = CacheFile(hash, name, size, modifiedAt, FileType.MP4, relativePath, sourceId)
 
     private val files = listOf(
         file("finder_video__aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 300, 1_700_000_100),
@@ -68,5 +73,18 @@ class CacheFileSorterTest {
             ),
             sorted.map { it.name }
         )
+    }
+
+    @Test
+    fun equalValuesTieBreakAcrossSourcesByKey() {
+        // 相同 relativePath、不同 sourceId 时按完整 key（源:路径）升序，结果稳定且跨源不抖动
+        val same = listOf(
+            file("same.bin", 100, 1L, sourceId = "sns_image"),
+            file("same.bin", 100, 1L, sourceId = "chat_image")
+        )
+
+        val sorted = CacheFileSorter.sort(same, SortOption(SortField.SIZE, SortDirection.ASC))
+
+        assertEquals(listOf("chat_image:same.bin", "sns_image:same.bin"), sorted.map { it.key })
     }
 }

@@ -460,9 +460,17 @@ private fun AboutRow(
     }
 }
 
-@Suppress("DEPRECATION")
 private fun versionName(context: Context): String = runCatching {
-    context.packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
+    val packageManager = context.packageManager
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        packageManager.getPackageInfo(
+            context.packageName,
+            android.content.pm.PackageManager.PackageInfoFlags.of(0)
+        ).versionName.orEmpty()
+    } else {
+        @Suppress("DEPRECATION")
+        packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
+    }
 }.getOrDefault("")
 
 private fun openUrl(context: Context, url: String): Boolean = runCatching {

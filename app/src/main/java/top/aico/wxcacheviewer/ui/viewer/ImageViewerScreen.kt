@@ -22,9 +22,11 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,6 +39,7 @@ import coil3.compose.AsyncImage
 import kotlinx.coroutines.launch
 import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.data.image.CoilImageLoaders
+import top.aico.wxcacheviewer.data.log.AppLog
 import top.aico.wxcacheviewer.data.media.MediaPreparer
 import top.aico.wxcacheviewer.domain.model.CacheFile
 import top.aico.wxcacheviewer.ui.common.formatFileSize
@@ -154,8 +157,16 @@ fun ImageViewerScreen(
 
 @Composable
 private fun ViewerPage(file: CacheFile, preparer: MediaPreparer) {
+    var prepareFailed by remember(file.key) { mutableStateOf(false) }
     val prepared by produceState<File?>(initialValue = null, key1 = file.key) {
-        value = preparer.prepare(file)
+        // producer 异常会抛到组合导致整屏崩溃，兜住后显示失败提示而不是无限转圈
+        value = try {
+            preparer.prepare(file)
+        } catch (e: Exception) {
+            AppLog.log("viewer", "prepare failed ${file.key}: ${e.message}")
+            prepareFailed = true
+            null
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -169,6 +180,11 @@ private fun ViewerPage(file: CacheFile, preparer: MediaPreparer) {
                     .fillMaxSize()
                     .padding(vertical = 56.dp),
                 contentScale = ContentScale.Fit
+            )
+
+            prepareFailed -> Text(
+                text = stringResource(id = R.string.file_open_failed, file.name),
+                color = Color.White
             )
 
             else -> CircularProgressIndicator(color = Color.White)

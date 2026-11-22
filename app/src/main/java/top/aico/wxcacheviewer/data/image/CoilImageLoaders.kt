@@ -29,13 +29,20 @@ object CoilImageLoaders {
     lateinit var animated: ImageLoader
         private set
 
+    @Synchronized
     fun init(context: Context) {
         if (this::static.isInitialized) return
-        static = build(context, animated = false)
-        animated = build(context, animated = true)
+        // 两个 loader 必须共享同一个 DiskCache 实例。若各自 new 一个指向同一目录，
+        // 两份独立的 LRU 状态会互相淘汰对方写入的缓存，命中率反而下降。
+        val diskCache = DiskCache.Builder()
+            .directory(File(context.cacheDir, DISK_CACHE_DIR).toOkioPath())
+            .maxSizeBytes(DISK_CACHE_BYTES)
+            .build()
+        static = build(context, diskCache, animated = false)
+        animated = build(context, diskCache, animated = true)
     }
 
-    private fun build(context: Context, animated: Boolean): ImageLoader =
+    private fun build(context: Context, diskCache: DiskCache, animated: Boolean): ImageLoader =
         ImageLoader.Builder(context)
             .serviceLoaderEnabled(false)
             .memoryCache {
@@ -43,12 +50,7 @@ object CoilImageLoaders {
                     .maxSizePercent(context, 0.2)
                     .build()
             }
-            .diskCache {
-                DiskCache.Builder()
-                    .directory(File(context.cacheDir, DISK_CACHE_DIR).toOkioPath())
-                    .maxSizeBytes(DISK_CACHE_BYTES)
-                    .build()
-            }
+            .diskCache(diskCache)
             .components {
                 if (animated) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {

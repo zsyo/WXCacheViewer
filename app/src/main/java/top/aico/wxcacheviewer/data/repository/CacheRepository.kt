@@ -16,6 +16,7 @@ import top.aico.wxcacheviewer.domain.model.extension
 import top.aico.wxcacheviewer.domain.source.CacheSource
 import top.aico.wxcacheviewer.domain.source.SourceRegistry
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /** 一次列表的结果；递归源文件过多时会截断，[truncated] 用于界面提示。 */
 data class SourceListing(
@@ -43,8 +44,8 @@ data class SourcePage(
 
 class CacheRepository(private val executor: RootCommandExecutor) {
 
-    /** 顶层子目录列表只在内存里缓存，下拉刷新时清空。 */
-    private val subDirCache = HashMap<String, List<String>>()
+    /** 顶层子目录列表只在内存里缓存，下拉刷新时清空。多个加载协程会并发读写，用并发容器。 */
+    private val subDirCache = ConcurrentHashMap<String, List<String>>()
 
     /** 一次分页取到的切片，[nextPosition] 为空表示这个源已经取完。 */
     private data class Slice(
@@ -95,8 +96,9 @@ class CacheRepository(private val executor: RootCommandExecutor) {
             }
 
             if (slice.files.isNotEmpty()) {
-                // 首页读不到才把错误交给界面；中间某页失败只记日志，继续往下翻
-                return@withContext SourcePage(slice.files, next, null)
+                // 即使拿到了部分文件，也要把本页的错误（如超时）交给界面提示，
+                // 让用户知道这一页可能不完整。游标已按实际读取量推进，可继续翻页。
+                return@withContext SourcePage(slice.files, next, slice.error)
             }
             if (cursor == null && slice.error != null) {
                 return@withContext SourcePage(emptyList(), null, slice.error)
@@ -158,10 +160,14 @@ class CacheRepository(private val executor: RootCommandExecutor) {
                 "flat page failed ${source.id}@$offset exit=${result.exitCode} " +
                     "timedOut=${result.timedOut} err=${result.stderr.take(160)}"
             )
-            if (files.isNotEmpty()) return Slice(files, offset + limit, null)
             val message = when {
-                result.timedOut -> "读取超时，请稍后下拉重试"
+                result.timedOut -> "读取超时，本页可能不完整"
                 else -> result.stderr.ifBlank { "缓存文件读取失败" }
+            }
+            // 超时只输出了前面一部分，必须按实际拿到的行数推进游标。
+            // 原先按 offset + limit 推进会把没读到的文件永久跳过，这一会话再也翻不到。
+            if (files.isNotEmpty()) {
+                return Slice(files.sortedByDescending { it.modifiedAt }, offset + lines.size, message)
             }
             return Slice(emptyList(), null, message)
         }
@@ -237,13 +243,14 @@ class CacheRepository(private val executor: RootCommandExecutor) {
                 "page failed ${source.id}/$dirName exit=${result.exitCode} " +
                     "timedOut=${result.timedOut} err=${result.stderr.take(160)}"
             )
-            // 超时也可能已经读到一部分，能解析就先用着，界面可以继续往下翻
-            if (files.isNotEmpty()) {
-                return DirPage(files.sortedByDescending { it.modifiedAt }, null)
-            }
             val message = when {
-                result.timedOut -> "读取超时，请稍后下拉重试"
+                result.timedOut -> "读取超时，本页可能不完整"
                 else -> result.stderr.ifBlank { "缓存文件读取失败" }
+            }
+            // 超时也可能已经读到一部分，能解析就先用着；但要带错误提示，
+            // 让用户知道这个目录没扫完，可下拉重试。
+            if (files.isNotEmpty()) {
+                return DirPage(files.sortedByDescending { it.modifiedAt }, message)
             }
             return DirPage(emptyList(), message)
         }
