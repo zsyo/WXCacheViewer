@@ -94,7 +94,7 @@ Android 16 及以上系统对应用数据目录做了更强的隔离，直接在
 环境：
 
 - JDK 21（运行 Gradle；源码编译目标仍是 Java 17）
-- Android SDK Platform 35、Build-Tools 36.0.0（AGP 9 要求 Build-Tools 最低 36.0.0）
+- Android SDK Platform 37、Build-Tools 37.0.0（Compose 1.12 / Coil 3.6 要求 compileSdk 37）
 
 ```bash
 # 调试包（按 ABI 拆成多个）
@@ -253,7 +253,7 @@ art/                     应用图标的原始设计稿（PNG），据此生成�
 spec/                    每个功能的规格文档
 ```
 
-技术栈：Kotlin 2.4.21（AGP 9 内置 Kotlin 编译）、Jetpack Compose（BOM 2024.12.01）、Material 3、Media3 ExoPlayer 1.5.1、Coil 2.7.0、SILK v3 定点解码器与 LAME（源码随模块编译）、AGP 9.5.0、Gradle 9.9.2。
+技术栈：Kotlin 2.4.21（AGP 9 内置 Kotlin 编译）、Jetpack Compose（BOM 2026.09.00）、Material 3、Media3 ExoPlayer 1.11.1、Coil 3.6.3、SILK v3 定点解码器与 LAME（源码随模块编译）、AGP 9.5.0、Gradle 9.9.2。
 
 ## 已知限制
 

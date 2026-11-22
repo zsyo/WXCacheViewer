@@ -29,11 +29,12 @@ jobs:
           java-version: '21'
 
       # NDK 与 CMake 的版本写死在 gradle/libs.versions.toml，runner 预装的未必是这两个。
-      # AGP 9 要求 Build Tools 最低 36.0.0。该入参按空格切分，必须写成一行，换行会被当成包名的一部分
+      # Compose 1.12 / Coil 3.6 要求 compileSdk 37；AGP 9 要求 Build Tools 最低 36.0.0。
+      # 该入参按空格切分，必须写成一行，换行会被当成包名的一部分
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools platforms;android-35 build-tools;36.0.0 ndk;28.2.13676358 cmake;3.22.1'
+          packages: 'platform-tools platforms;android-37 build-tools;37.0.0 ndk;28.2.13676358 cmake;3.22.1'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6

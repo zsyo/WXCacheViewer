@@ -43,7 +43,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -70,11 +70,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
+import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -147,6 +148,7 @@ fun GalleryScreen(
     onOpenSettings: () -> Unit
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val thumbnailLoader = remember { ThumbnailLoader(context, RootCommandExecutor()) }
     val mediaPreparer = remember { MediaPreparer(context, RootCommandExecutor()) }
     LaunchedEffect(accountHash) {
@@ -239,7 +241,7 @@ fun GalleryScreen(
                 openingKey = null
                 if (prepared == null || !openFileWith(context, prepared, file)) {
                     snackbarHostState.showSnackbar(
-                        context.getString(R.string.file_open_failed, file.name)
+                        resources.getString(R.string.file_open_failed, file.name)
                     )
                 }
             }
@@ -276,9 +278,9 @@ fun GalleryScreen(
                         voicePlaying = true
                     } catch (e: Exception) {
                         snackbarHostState.showSnackbar(
-                            context.getString(
+                            resources.getString(
                                 R.string.voice_play_failed,
-                                e.message ?: context.getString(R.string.voice_decode_failed)
+                                e.message ?: resources.getString(R.string.voice_decode_failed)
                             )
                         )
                     } finally {
@@ -1142,7 +1144,7 @@ private fun GalleryTabs(
     onSelect: (SourceTab) -> Unit
 ) {
     // 五个类型挤在固定宽度里会把「聊天视频」截断，改成按内容宽度排列、可横向滚动
-    ScrollableTabRow(
+    PrimaryScrollableTabRow(
         selectedTabIndex = SourceTab.entries.indexOf(selected),
         edgePadding = 0.dp
     ) {

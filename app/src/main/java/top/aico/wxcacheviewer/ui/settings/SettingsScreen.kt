@@ -45,6 +45,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -76,6 +77,7 @@ fun SettingsScreen(
     onNoticeShown: () -> Unit
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var dialog by remember { mutableStateOf<AboutDialog?>(null) }
@@ -86,7 +88,7 @@ fun SettingsScreen(
     val openLink: (String) -> Unit = { url ->
         if (!openUrl(context, url)) {
             scope.launch {
-                snackbarHostState.showSnackbar(context.getString(R.string.settings_link_failed))
+                snackbarHostState.showSnackbar(resources.getString(R.string.settings_link_failed))
             }
         }
     }
@@ -105,7 +107,7 @@ fun SettingsScreen(
         if (path == null) {
             scope.launch {
                 snackbarHostState.showSnackbar(
-                    context.getString(R.string.settings_export_root_unsupported)
+                    resources.getString(R.string.settings_export_root_unsupported)
                 )
             }
             return@rememberLauncherForActivityResult

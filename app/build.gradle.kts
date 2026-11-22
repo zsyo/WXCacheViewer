@@ -19,7 +19,9 @@ val hasReleaseKey = releaseKeystore?.exists() == true
 
 android {
     namespace = "top.aico.wxcacheviewer"
-    compileSdk = 35
+    // Compose 1.12 / Coil 3.6 起要求 compileSdk 37；targetSdk 保持 35，
+    // 避免本次依赖升级叠加运行时行为变更（root shell / 外部存储访问需单独回归）
+    compileSdk = 37
 
     // SILK 解码器随源码编译，NDK r28 起默认按 16KB 页对齐
     ndkVersion = libs.versions.ndk.get()
@@ -122,6 +124,7 @@ dependencies {
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.media3.exoplayer)

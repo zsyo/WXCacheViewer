@@ -51,6 +51,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -78,11 +80,13 @@ import kotlin.math.roundToInt
 @Composable
 fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
+    val density = LocalDensity.current.density
     val scope = rememberCoroutineScope()
     val preparer = remember { VideoPreparer(RootCommandExecutor()) }
     val settings = remember { SettingsRepository(context) }
     val volumePopupPositionProvider = remember {
-        VolumePopupPositionProvider(gapPx = (6 * context.resources.displayMetrics.density).toInt())
+        VolumePopupPositionProvider(gapPx = (6 * density).toInt())
     }
     val videoPlayer = remember(file.name) { SimpleVideoPlayer(context) }
 
@@ -126,7 +130,7 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
             val prepared = preparer.prepare(context, file)
             videoPlayer.setSource(prepared.absolutePath)
         } catch (e: Exception) {
-            error = e.message ?: context.getString(R.string.player_prepare_failed)
+            error = e.message ?: resources.getString(R.string.player_prepare_failed)
         }
         copying = false
     }
@@ -143,7 +147,7 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
         keepControlsVisible()
     }
     videoPlayer.onError = { message ->
-        error = context.getString(R.string.player_play_failed_generic, message)
+        error = resources.getString(R.string.player_play_failed_generic, message)
         isPlaying = false
     }
 
