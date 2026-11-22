@@ -35,9 +35,15 @@ AAPT: error: attribute 'package' in <manifest> tag is not a valid Android packag
 - `SettingsScreen` 里通过 `context.packageManager.getPackageInfo(context.packageName, 0)` 取版本号，跟随 debug 包名，正常。
 - Kotlin 源码包名（namespace）仍是 `top.aico.wxcacheviewer`，不受 applicationId 影响，所有 import 无需改动。
 
-## 已知取舍
+## 应用名区分（后续补充）
 
-debug 与 release 的应用名都取自同一个 `app_name` 字符串，桌面上两个图标显示为同名「微信缓存查看器」，仅能通过应用信息里的包名区分。如需视觉上区分，可另加 debug 专属字符串资源覆盖，本次未做。
+两个包最初都取自同一个 `app_name` 字符串，桌面显示同名，只能靠包名区分。后来增加 debug 专属资源覆盖，新增 `app/src/debug/res/values/strings.xml`，仅重定义 `app_name`：
+
+```xml
+<string name="app_name">微信缓存查看器（开发版）</string>
+```
+
+debug sourceSet 的资源在合并时覆盖 main 的同名项，其余字符串仍从 main 继承，无需重复声明。debug 包应用名为「微信缓存查看器（开发版）」，release 仍为「微信缓存查看器」。
 
 ## 验证
 
@@ -46,3 +52,4 @@ debug 与 release 的应用名都取自同一个 `app_name` 字符串，桌面�
 - debug 合并 manifest 的 FileProvider authority 为 `top.aico.wxcacheviewer.dev.fileprovider`。
 - 八个包的 `zipalign -c -P 16` 校验全部通过，16KB 页对齐无退化。
 - 真机（MT MCP）安装验证：先装 release v0.1.0，再装 debug 包，两者同时存在，安装未报签名冲突。
+- 应用名覆盖后重新验证：`aapt2 dump badging` 显示 debug 标签「微信缓存查看器（开发版）」、release 标签「微信缓存查看器」；真机已安装列表同时显示两个不同名称的包，桌面可区分。
