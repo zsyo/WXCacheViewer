@@ -94,7 +94,7 @@ Android 16 及以上系统对应用数据目录做了更强的隔离，直接在
 环境：
 
 - JDK 21（运行 Gradle；源码编译目标仍是 Java 17）
-- Android SDK Platform 37、Build-Tools 37.0.0（Compose 1.12 / Coil 3.6 要求 compileSdk 37）
+- Android SDK Platform 37.0、Build-Tools 37.0.0（Compose 1.12 / Coil 3.6 要求 compileSdk 37；平台包从 Android 16 QPR 起带 minor 版本号，安装名是 `platforms;android-37.0`）
 
 ```bash
 # 调试包（按 ABI 拆成多个）
