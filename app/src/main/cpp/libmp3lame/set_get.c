@@ -20,11 +20,11 @@
  * Boston, MA 02111-1307, USA.
  */
 
-/* $Id: set_get.c,v 1.98 2011/05/07 16:05:17 rbrito Exp $ */
+/* $Id$ */
 
-//#ifdef HAVE_CONFIG_H
-//# include <config.h>
-//#endif
+#ifdef HAVE_CONFIG_H
+# include <config.h>
+#endif
 
 #include "lame.h"
 #include "machine.h"
@@ -68,6 +68,8 @@ int
 lame_set_in_samplerate(lame_global_flags * gfp, int in_samplerate)
 {
     if (is_lame_global_flags_valid(gfp)) {
+        if (in_samplerate < 1)
+            return -1;
         /* input sample rate in Hz,  default = 44100 Hz */
         gfp->samplerate_in = in_samplerate;
         return 0;
@@ -91,7 +93,7 @@ lame_set_num_channels(lame_global_flags * gfp, int num_channels)
 {
     if (is_lame_global_flags_valid(gfp)) {
         /* default = 2 */
-        if (2 < num_channels || 0 == num_channels) {
+        if (2 < num_channels || 0 >= num_channels) {
             return -1;  /* we don't support more than 2 channels */
         }
         gfp->num_channels = num_channels;
@@ -132,7 +134,7 @@ lame_get_scale(const lame_global_flags * gfp)
 }
 
 
-/* scale the channel 0 (left) input by this amount before 
+/* scale the channel 0 (left) input by this amount before
    encoding (not used for decoding) */
 int
 lame_set_scale_left(lame_global_flags * gfp, float scale)
@@ -155,7 +157,7 @@ lame_get_scale_left(const lame_global_flags * gfp)
 }
 
 
-/* scale the channel 1 (right) input by this amount before 
+/* scale the channel 1 (right) input by this amount before
    encoding (not used for decoding) */
 int
 lame_set_scale_right(lame_global_flags * gfp, float scale)
@@ -193,6 +195,11 @@ lame_set_out_samplerate(lame_global_flags * gfp, int out_samplerate)
          *
          * (not used by decoding routines)
          */
+        if (out_samplerate != 0) {
+            int     v=0;
+            if (SmpFrqIndex(out_samplerate, &v) < 0)
+                return -1;
+        }
         gfp->samplerate_out = out_samplerate;
         return 0;
     }
@@ -333,7 +340,7 @@ lame_get_ogg(const lame_global_flags * gfp)
  * Internal algorithm selection.
  * True quality is determined by the bitrate but this variable will effect
  * quality by selecting expensive or cheap algorithms.
- * quality=0..9.  0=best (very slow).  9=worst.  
+ * quality=0..9.  0=best (very slow).  9=worst.
  * recommended:  3     near-best quality, not too slow
  *               5     good quality, fast
  *               7     ok quality, really fast
@@ -521,7 +528,7 @@ lame_get_findReplayGain(const lame_global_flags * gfp)
 }
 
 
-/* Decode on the fly. Find the peak sample. If ReplayGain analysis is 
+/* Decode on the fly. Find the peak sample. If ReplayGain analysis is
    enabled then perform it on the decoded data. */
 int
 lame_set_decode_on_the_fly(lame_global_flags * gfp, int decode_on_the_fly)
@@ -927,7 +934,7 @@ lame_get_strict_ISO(const lame_global_flags * gfp)
 
 
 /********************************************************************
- * quantization/noise shaping 
+ * quantization/noise shaping
  ***********************************************************************/
 
 /* Disable the bit reservoir. For testing only. */
@@ -1118,7 +1125,7 @@ lame_get_VBR(const lame_global_flags * gfp)
 /*
  * VBR quality level.
  *  0 = highest
- *  9 = lowest 
+ *  9 = lowest
  */
 int
 lame_set_VBR_q(lame_global_flags * gfp, int VBR_q)
@@ -1382,7 +1389,7 @@ lame_get_highpasswidth(const lame_global_flags * gfp)
 
 
 /*
- * psycho acoustics and other arguments which you should not change 
+ * psycho acoustics and other arguments which you should not change
  * unless you know what you are doing
  */
 
@@ -1956,7 +1963,7 @@ lame_get_emphasis(const lame_global_flags * gfp)
 /* MPEG version.
  *  0 = MPEG-2
  *  1 = MPEG-1
- * (2 = MPEG-2.5)    
+ * (2 = MPEG-2.5)
  */
 int
 lame_get_version(const lame_global_flags * gfp)
@@ -2124,28 +2131,47 @@ lame_get_totalframes(const lame_global_flags * gfp)
         lame_internal_flags const *const gfc = gfp->internal_flags;
         if (is_lame_internal_flags_valid(gfc)) {
             SessionConfig_t const *const cfg = &gfc->cfg;
-            unsigned long const pcm_samples_per_frame = 576 * cfg->mode_gr;
+            unsigned long const pcm_samples_per_frame = 576ul * cfg->mode_gr;
             unsigned long pcm_samples_to_encode = gfp->num_samples;
             unsigned long end_padding = 0;
+            int frames = 0;
+
+            if (pcm_samples_to_encode == (0ul-1ul))
+                return 0; /* unknown */
 
             /* estimate based on user set num_samples: */
-            if (pcm_samples_to_encode == (0ul-1ul)) {
-                return 0;
+            if (cfg->samplerate_in != cfg->samplerate_out) {
+                /* resampling, estimate new samples_to_encode */
+                double resampled_samples_to_encode = 0.0, frames_f = 0.0;
+                if (cfg->samplerate_in > 0) {
+                    resampled_samples_to_encode = pcm_samples_to_encode;
+                    resampled_samples_to_encode *= cfg->samplerate_out;
+                    resampled_samples_to_encode /= cfg->samplerate_in;
+                }
+                if (resampled_samples_to_encode <= 0.0)
+                    return 0; /* unlikely to happen, so what, no estimate! */
+                frames_f = floor(resampled_samples_to_encode / pcm_samples_per_frame);
+                if (frames_f >= (INT_MAX-2))
+                    return 0; /* overflow, happens eventually, no estimate! */
+                frames = frames_f;
+                resampled_samples_to_encode -= frames * pcm_samples_per_frame;
+                pcm_samples_to_encode = ceil(resampled_samples_to_encode);
             }
-            if (gfp->samplerate_in != gfp->samplerate_out && gfp->samplerate_in > 0) {
-                double const q = (double)gfp->samplerate_out / gfp->samplerate_in;
-                pcm_samples_to_encode *= q;
+            else {
+                frames = pcm_samples_to_encode / pcm_samples_per_frame;
+                pcm_samples_to_encode -= frames * pcm_samples_per_frame;
             }
-            pcm_samples_to_encode += 576;
+            pcm_samples_to_encode += 576ul;
             end_padding = pcm_samples_per_frame - (pcm_samples_to_encode % pcm_samples_per_frame);
-            if (end_padding < 576) {
+            if (end_padding < 576ul) {
                 end_padding += pcm_samples_per_frame;
             }
             pcm_samples_to_encode += end_padding;
+            frames += (pcm_samples_to_encode / pcm_samples_per_frame);
             /* check to see if we underestimated totalframes */
             /*    if (totalframes < gfp->frameNum) */
             /*        totalframes = gfp->frameNum; */
-            return pcm_samples_to_encode / pcm_samples_per_frame;
+            return frames;
         }
     }
     return 0;
@@ -2216,13 +2242,13 @@ lame_get_write_id3tag_automatic(lame_global_flags const *gfp)
 
 UNDOCUMENTED, experimental settings.  These routines are not prototyped
 in lame.h.  You should not use them, they are experimental and may
-change.  
+change.
 
 */
 
 
 /*
- *  just another daily changing developer switch  
+ *  just another daily changing developer switch
  */
 void CDECL lame_set_tune(lame_global_flags *, float);
 
@@ -2274,4 +2300,47 @@ lame_set_preset_notune(lame_global_flags * gfp, int preset_notune)
     (void) gfp;
     (void) preset_notune;
     return 0;
+}
+
+static int
+calc_maximum_input_samples_for_buffer_size(lame_internal_flags const* gfc, size_t buffer_size)
+{
+    SessionConfig_t const *const cfg = &gfc->cfg;
+    int const pcm_samples_per_frame = 576 * cfg->mode_gr;
+    int     frames_per_buffer = 0, input_samples_per_buffer = 0;
+    int     kbps = 320;
+
+    if (cfg->samplerate_out < 16000)
+        kbps = 64;
+    else if (cfg->samplerate_out < 32000)
+        kbps = 160;
+    else
+        kbps = 320;
+    if (cfg->free_format)
+        kbps = cfg->avg_bitrate;
+    else if (cfg->vbr == vbr_off) {
+        kbps = cfg->avg_bitrate;
+    }
+    {
+        int const pad = 1;
+        int const bpf = ((cfg->version + 1) * 72000 * kbps / cfg->samplerate_out + pad);
+        frames_per_buffer = buffer_size / bpf;
+    }
+    {
+        double ratio = (double) cfg->samplerate_in / cfg->samplerate_out;
+        input_samples_per_buffer = pcm_samples_per_frame * frames_per_buffer * ratio;
+    }
+    return input_samples_per_buffer;
+}
+
+int
+lame_get_maximum_number_of_samples(lame_t gfp, size_t buffer_size)
+{
+    if (is_lame_global_flags_valid(gfp)) {
+        lame_internal_flags const *const gfc = gfp->internal_flags;
+        if (is_lame_internal_flags_valid(gfc)) {
+            return calc_maximum_input_samples_for_buffer_size(gfc, buffer_size);
+        }
+    }
+    return LAME_GENERICERROR;
 }

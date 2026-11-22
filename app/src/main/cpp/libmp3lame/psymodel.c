@@ -4,7 +4,7 @@
  *      Copyright (c) 1999-2000 Mark Taylor
  *      Copyright (c) 2001-2002 Naoki Shibata
  *      Copyright (c) 2000-2003 Takehiro Tominaga
- *      Copyright (c) 2000-2011 Robert Hegemann
+ *      Copyright (c) 2000-2012 Robert Hegemann
  *      Copyright (c) 2000-2005 Gabriel Bouvigne
  *      Copyright (c) 2000-2005 Alexander Leidinger
  *
@@ -24,16 +24,16 @@
  * Boston, MA 02111-1307, USA.
  */
 
-/* $Id: psymodel.c,v 1.209 2011/05/24 20:45:55 robert Exp $ */
+/* $Id$ */
 
 
 /*
 PSYCHO ACOUSTICS
 
 
-This routine computes the psycho acoustics, delayed by one granule.  
+This routine computes the psycho acoustics, delayed by one granule.
 
-Input: buffer of PCM data (1024 samples).  
+Input: buffer of PCM data (1024 samples).
 
 This window should be centered over the 576 sample granule window.
 The routine will compute the psycho acoustics for
@@ -41,10 +41,10 @@ this granule, but return the psycho acoustics computed
 for the *previous* granule.  This is because the block
 type of the previous granule can only be determined
 after we have computed the psycho acoustics for the following
-granule.  
+granule.
 
 Output:  maskings and energies for each scalefactor band.
-block type, PE, and some correlation measures.  
+block type, PE, and some correlation measures.
 The PE is used by CBR modes to determine if extra bits
 from the bit reservoir should be used.  The correlation
 measures are used to determine mid/side or regular stereo.
@@ -55,7 +55,7 @@ Notation:
 barks:  a non-linear frequency scale.  Mapping from frequency to
         barks is given by freq2bark()
 
-scalefactor bands: The spectrum (frequencies) are broken into 
+scalefactor bands: The spectrum (frequencies) are broken into
                    SBMAX "scalefactor bands".  Thes bands
                    are determined by the MPEG ISO spec.  In
                    the noise shaping/quantization code, we allocate
@@ -63,7 +63,7 @@ scalefactor bands: The spectrum (frequencies) are broken into
                    best possible quality
 
 partition bands:   The spectrum is also broken into about
-                   64 "partition bands".  Each partition 
+                   64 "partition bands".  Each partition
                    band is about .34 barks wide.  There are about 2-5
                    partition bands for each scalefactor band.
 
@@ -83,7 +83,7 @@ The general outline is as follows:
 2. compute the tonality in each partition band
 3. compute the strength of each partion band "masker"
 4. compute the masking (via the spreading function applied to each masker)
-5. Modifications for mid/side masking.  
+5. Modifications for mid/side masking.
 
 Each partition band is considiered a "masker".  The strength
 of the i'th masker in band j is given by:
@@ -97,7 +97,7 @@ energy divided by a linear function of the tonality.
 */
 /*
 s3() is the "spreading function".  It is given by a formula
-determined via listening tests.  
+determined via listening tests.
 
 The total masking in the j'th partition band is the sum over
 all maskings i.  It is thus given by the convolution of
@@ -130,7 +130,7 @@ Other data computed by the psy-model:
 ms_ratio        side-channel / mid-channel masking ratio (for previous granule)
 ms_ratio_next   side-channel / mid-channel masking ratio for this granule
 
-percep_entropy[2]     L and R values (prev granule) of PE - A measure of how 
+percep_entropy[2]     L and R values (prev granule) of PE - A measure of how
                       much pre-echo is in the previous granule
 percep_entropy_MS[2]  mid and side channel values (prev granule) of percep_entropy
 energy[4]             L,R,M,S energy in each channel, prev granule
@@ -140,9 +140,11 @@ blocktype_d[2]        block type to use for previous granule
 
 
 
-//#ifdef HAVE_CONFIG_H
-//# include <config.h>
-//#endif
+#ifdef HAVE_CONFIG_H
+# include <config.h>
+#endif
+
+#include <float.h>
 
 #include "lame.h"
 #include "machine.h"
@@ -166,23 +168,23 @@ blocktype_d[2]        block type to use for previous granule
 /*
    L3psycho_anal.  Compute psycho acoustics.
 
-   Data returned to the calling program must be delayed by one 
-   granule. 
+   Data returned to the calling program must be delayed by one
+   granule.
 
-   This is done in two places.  
+   This is done in two places.
    If we do not need to know the blocktype, the copying
    can be done here at the top of the program: we copy the data for
    the last granule (computed during the last call) before it is
    overwritten with the new data.  It looks like this:
-  
-   0. static psymodel_data 
+
+   0. static psymodel_data
    1. calling_program_data = psymodel_data
    2. compute psymodel_data
-    
+
    For data which needs to know the blocktype, the copying must be
    done at the end of this loop, and the old values must be saved:
-   
-   0. static psymodel_data_old 
+
+   0. static psymodel_data_old
    1. compute psymodel_data
    2. compute possible block type of this granule
    3. compute final block type of previous granule based on #2.
@@ -233,7 +235,7 @@ psycho_loudness_approx(FLOAT const *energy, FLOAT const *eql_w)
  * abs(i)>8 is equivalent (as i is an integer) to
  * abs(i)>=9
  * i>=9 || i<=-9
- * equivalent to (as i is the biggest integer smaller than log10(m2/m1)*16 
+ * equivalent to (as i is the biggest integer smaller than log10(m2/m1)*16
  * or the smallest integer bigger than log10(m2/m1)*16 depending on the sign of log10(m2/m1)*16)
  * log10(m2/m1)>=9/16 || log10(m2/m1)<=-9/16
  * exp10 is strictly increasing thus this is equivalent to
@@ -245,9 +247,12 @@ psycho_loudness_approx(FLOAT const *energy, FLOAT const *eql_w)
 #define I2LIMIT 23      /* as in if(i>24) -> changed 23 */
 #define MLIMIT  15      /* as in if(m<15) */
 
-static FLOAT ma_max_i1;
-static FLOAT ma_max_i2;
-static FLOAT ma_max_m;
+/* pow(10, (I1LIMIT + 1) / 16.0); */
+static const FLOAT ma_max_i1 = 3.6517412725483771;
+/* pow(10, (I2LIMIT + 1) / 16.0); */
+static const FLOAT ma_max_i2 = 31.622776601683793;
+/* pow(10, (MLIMIT) / 10.0); */
+static const FLOAT ma_max_m  = 31.622776601683793;
 
     /*This is the masking table:
        According to tonality, values are going from 0dB (TMN)
@@ -268,7 +273,7 @@ static const FLOAT tab[] = {
 };
 
 static const int tab_mask_add_delta[] = { 2, 2, 2, 1, 1, 1, 0, 0, -1 };
-#define STATIC_ASSERT_EQUAL_DIMENSION(A,B) {extern char static_assert_##A[dimension_of(A) == dimension_of(B) ? 1 : -1];(void) static_assert_##A;}
+#define STATIC_ASSERT_EQUAL_DIMENSION(A,B) enum{static_assert_##A=1/((dimension_of(A) == dimension_of(B))?1:0)}
 
 inline static int
 mask_add_delta(int i)
@@ -282,9 +287,14 @@ mask_add_delta(int i)
 static void
 init_mask_add_max_values(void)
 {
-    ma_max_i1 = pow(10, (I1LIMIT + 1) / 16.0);
-    ma_max_i2 = pow(10, (I2LIMIT + 1) / 16.0);
-    ma_max_m = pow(10, (MLIMIT) / 10.0);
+#ifndef NDEBUG
+    FLOAT const _ma_max_i1 = pow(10, (I1LIMIT + 1) / 16.0);
+    FLOAT const _ma_max_i2 = pow(10, (I2LIMIT + 1) / 16.0);
+    FLOAT const _ma_max_m = pow(10, (MLIMIT) / 10.0);
+    assert(fabs(ma_max_i1 - _ma_max_i1) <= FLT_EPSILON);
+    assert(fabs(ma_max_i2 - _ma_max_i2) <= FLT_EPSILON);
+    assert(fabs(ma_max_m  - _ma_max_m ) <= FLT_EPSILON);
+#endif
 }
 
 
@@ -738,7 +748,7 @@ vbrpsy_compute_fft_s(lame_internal_flags const *gfc, const sample_t * const buff
 
 
     /*********************************************************************
-    * compute loudness approximation (used for ATH auto-level adjustment) 
+    * compute loudness approximation (used for ATH auto-level adjustment)
     *********************************************************************/
 static void
 vbrpsy_compute_loudness_approximation_l(lame_internal_flags * gfc, int gr_out, int chn,
@@ -817,7 +827,7 @@ vbrpsy_attack_detection(lame_internal_flags * gfc, const sample_t * const buffer
                 ns_hpfsmpl[1][i] = l - r;
             }
         }
-        /*************************************************************** 
+        /***************************************************************
         * determine the block type (window type)
         ***************************************************************/
         /* calculate energies of each sub-shortblocks */
@@ -1185,11 +1195,11 @@ vbrpsy_compute_masking_l(lame_internal_flags * gfc, const FLOAT fftenergy[HBLKSI
         ecb *= avg_mask;
 
         /****   long block pre-echo control   ****/
-        /* dont use long block pre-echo control if previous granule was 
-         * a short block.  This is to avoid the situation:   
-         * frame0:  quiet (very low masking)  
+        /* dont use long block pre-echo control if previous granule was
+         * a short block.  This is to avoid the situation:
+         * frame0:  quiet (very low masking)
          * frame1:  surge  (triggers short blocks)
-         * frame2:  regular frame.  looks like pre-echo when compared to 
+         * frame2:  regular frame.  looks like pre-echo when compared to
          *          frame0, but all pre-echo was in frame1.
          */
         /* chn=0,1   L and R channels
@@ -1319,7 +1329,7 @@ vbrpsy_apply_block_type(PsyStateVar_t * psv, int nch, int const *uselongblock, i
 }
 
 
-/*************************************************************** 
+/***************************************************************
  * compute M/S thresholds from Johnston & Ferreira 1992 ICASSP paper
  ***************************************************************/
 
@@ -1557,7 +1567,7 @@ L3psycho_anal_vbr(lame_internal_flags * gfc,
     }
 
 
-    /*************************************************************** 
+    /***************************************************************
     * determine final block type
     ***************************************************************/
     vbrpsy_apply_block_type(psv, cfg->channels_out, uselongblock, blocktype_d);
@@ -1599,7 +1609,7 @@ L3psycho_anal_vbr(lame_internal_flags * gfc,
 
 
 
-/* 
+/*
  *   The spreading function.  Values returned in units of energy
  */
 static  FLOAT
@@ -1852,7 +1862,7 @@ init_s3_values(FLOAT ** p, int (*s3ind)[2], int npart,
         s3ind[i][1] = j;
         numberOfNoneZero += (s3ind[i][1] - s3ind[i][0] + 1);
     }
-    *p = malloc(sizeof(FLOAT) * numberOfNoneZero);
+    *p = lame_calloc(FLOAT, numberOfNoneZero);
     if (!*p)
         return -1;
 
@@ -1889,7 +1899,7 @@ psymodel_init(lame_global_flags const *gfp)
     }
     memset(norm, 0, sizeof(norm));
 
-    gd = calloc(1, sizeof(PsyConst_t));
+    gd = lame_calloc(PsyConst_t, 1);
     gfc->cd_psy = gd;
 
     gd->force_short_block_calc = gfp->experimentalZ;
@@ -2060,7 +2070,7 @@ psymodel_init(lame_global_flags const *gfp)
         cfg->msfix = msfix;
 
         /* spread only from npart_l bands.  Normally, we use the spreading
-         * function to convolve from npart_l down to npart_l bands 
+         * function to convolve from npart_l down to npart_l bands
          */
         for (b = 0; b < gd->l.npart; b++)
             if (gd->l.s3ind[b][1] > gd->l.npart - 1)

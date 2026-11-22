@@ -19,11 +19,11 @@
  * Boston, MA 02111-1307, USA.
  */
 
-/* $Id: reservoir.c,v 1.45 2011/05/07 16:05:17 rbrito Exp $ */
+/* $Id$ */
 
-//#ifdef HAVE_CONFIG_H
-//# include <config.h>
-//#endif
+#ifdef HAVE_CONFIG_H
+# include <config.h>
+#endif
 
 
 #include "lame.h"
@@ -145,7 +145,7 @@ ResvFrameBegin(lame_internal_flags * gfc, int *mean_bits)
         esv->ResvMax = resvLimit;
     if (esv->ResvMax < 0 || cfg->disable_reservoir)
         esv->ResvMax = 0;
-    
+
     fullFrameBits = meanBits * cfg->mode_gr + Min(esv->ResvSize, esv->ResvMax);
 
     if (fullFrameBits > maxmp3buf)

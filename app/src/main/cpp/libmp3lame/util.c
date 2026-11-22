@@ -20,12 +20,13 @@
  * Boston, MA 02111-1307, USA.
  */
 
-/* $Id: util.c,v 1.154.2.1 2012/01/08 23:49:58 robert Exp $ */
+/* $Id$ */
 
-//#ifdef HAVE_CONFIG_H
-//# include <config.h>
-//#endif
+#ifdef HAVE_CONFIG_H
+# include <config.h>
+#endif
 
+#include <float.h>
 #include "lame.h"
 #include "machine.h"
 #include "encoder.h"
@@ -48,6 +49,7 @@
 void
 free_id3tag(lame_internal_flags * const gfc)
 {
+    gfc->tag_spec.language[0] = 0;
     if (gfc->tag_spec.title != 0) {
         free(gfc->tag_spec.title);
         gfc->tag_spec.title = 0;
@@ -111,6 +113,7 @@ freegfc(lame_internal_flags * const gfc)
 {                       /* bit stream structure */
     int     i;
 
+    if (gfc == 0) return;
 
     for (i = 0; i <= 2 * BPC; i++)
         if (gfc->sv_enc.blackfilt[i] != NULL) {
@@ -163,16 +166,22 @@ freegfc(lame_internal_flags * const gfc)
 }
 
 void
-malloc_aligned(aligned_pointer_t * ptr, unsigned int size, unsigned int bytes)
+calloc_aligned(aligned_pointer_t * ptr, unsigned int size, unsigned int bytes)
 {
     if (ptr) {
         if (!ptr->pointer) {
             ptr->pointer = malloc(size + bytes);
-            if (bytes > 0) {
-                ptr->aligned = (void *) ((((size_t) ptr->pointer + bytes - 1) / bytes) * bytes);
+            if (ptr->pointer != 0) {
+                memset(ptr->pointer, 0, size + bytes);
+                if (bytes > 0) {
+                    ptr->aligned = (void *) ((((size_t) ptr->pointer + bytes - 1) / bytes) * bytes);
+                }
+                else {
+                    ptr->aligned = ptr->pointer;
+                }
             }
             else {
-                ptr->aligned = ptr->pointer;
+                ptr->aligned = 0;
             }
         }
     }
@@ -238,30 +247,30 @@ bitrate is more balanced according to the -V value.*/
 
 
 FLOAT
-ATHformula(SessionConfig_t const *cfg, FLOAT f)
+ATHformula(SessionConfig_t const *cfg, FLOAT freq)
 {
     FLOAT   ath;
     switch (cfg->ATHtype) {
     case 0:
-        ath = ATHformula_GB(f, 9, 0.1f, 24.0f);
+        ath = ATHformula_GB(freq, 9, 0.1f, 24.0f);
         break;
     case 1:
-        ath = ATHformula_GB(f, -1, 0.1f, 24.0f); /*over sensitive, should probably be removed */
+        ath = ATHformula_GB(freq, -1, 0.1f, 24.0f); /*over sensitive, should probably be removed */
         break;
     case 2:
-        ath = ATHformula_GB(f, 0, 0.1f, 24.0f);
+        ath = ATHformula_GB(freq, 0, 0.1f, 24.0f);
         break;
     case 3:
-        ath = ATHformula_GB(f, 1, 0.1f, 24.0f) + 6; /*modification of GB formula by Roel */
+        ath = ATHformula_GB(freq, 1, 0.1f, 24.0f) + 6; /*modification of GB formula by Roel */
         break;
     case 4:
-        ath = ATHformula_GB(f, cfg->ATHcurve, 0.1f, 24.0f);
+        ath = ATHformula_GB(freq, cfg->ATHcurve, 0.1f, 24.0f);
         break;
     case 5:
-        ath = ATHformula_GB(f, cfg->ATHcurve, 3.41f, 16.1f);
+        ath = ATHformula_GB(freq, cfg->ATHcurve, 3.41f, 16.1f);
         break;
     default:
-        ath = ATHformula_GB(f, 0, 0.1f, 24.0f);
+        ath = ATHformula_GB(freq, 0, 0.1f, 24.0f);
         break;
     }
     return ath;
@@ -534,7 +543,7 @@ fill_buffer_resample(lame_internal_flags * gfc,
     EncStateVar_t *esv = &gfc->sv_enc;
     double  resample_ratio = (double)cfg->samplerate_in / (double)cfg->samplerate_out;
     int     BLACKSIZE;
-    FLOAT   offset, xvalue;
+    FLOAT   offset;
     int     i, j = 0, k;
     int     filter_l;
     FLOAT   fcn, intratio;
@@ -544,7 +553,7 @@ fill_buffer_resample(lame_internal_flags * gfc,
     if (bpc > BPC)
         bpc = BPC;
 
-    intratio = (fabs(resample_ratio - floor(.5 + resample_ratio)) < .0001);
+    intratio = (fabs(resample_ratio - floor(.5 + resample_ratio)) < FLT_EPSILON);
     fcn = 1.00 / resample_ratio;
     if (fcn > 1.00)
         fcn = 1.00;
@@ -555,10 +564,10 @@ fill_buffer_resample(lame_internal_flags * gfc,
     BLACKSIZE = filter_l + 1; /* size of data needed for FIR */
 
     if (gfc->fill_buffer_resample_init == 0) {
-        esv->inbuf_old[0] = calloc(BLACKSIZE, sizeof(esv->inbuf_old[0][0]));
-        esv->inbuf_old[1] = calloc(BLACKSIZE, sizeof(esv->inbuf_old[0][0]));
+        esv->inbuf_old[0] = lame_calloc(sample_t, BLACKSIZE);
+        esv->inbuf_old[1] = lame_calloc(sample_t, BLACKSIZE);
         for (i = 0; i <= 2 * bpc; ++i)
-            esv->blackfilt[i] = calloc(BLACKSIZE, sizeof(esv->blackfilt[0][0]));
+            esv->blackfilt[i] = lame_calloc(sample_t, BLACKSIZE);
 
         esv->itime[0] = 0;
         esv->itime[1] = 0;
@@ -581,6 +590,7 @@ fill_buffer_resample(lame_internal_flags * gfc,
     /* time of k'th element in outbuf   =  j/ofreq */
     for (k = 0; k < desired_len; k++) {
         double  time0 = k * resample_ratio; /* time of k'th output sample */
+        FLOAT   xvalue;
         int     joff;
 
         j = floor(time0 - esv->itime[ch]);
@@ -592,6 +602,15 @@ fill_buffer_resample(lame_internal_flags * gfc,
         /* blackman filter.  by default, window centered at j+.5(filter_l%2) */
         /* but we want a window centered at time0.   */
         offset = (time0 - esv->itime[ch] - (j + .5 * (filter_l % 2)));
+        /* offset is bounded to [-0.5, +0.5) by construction, so joff below
+           always lands within blackfilt[0 .. 2*bpc] and never over-indexes
+           the table: for a non-integer resample ratio filter_l is odd, making
+           offset the fractional part of (time0 - itime) minus 0.5; for a
+           (near-)integer ratio the intratio branch above is only taken when
+           the ratio is an *exact* integer (samplerate_in an exact multiple of
+           samplerate_out), where offset is identically 0.  Sample rates are
+           always integers, so no runtime bounds guard is needed here - the
+           assert is a development-time sanity check, compiled out under NDEBUG. */
         assert(fabs(offset) <= .501);
 
         /* find the closest precomputed window for this offset: */
@@ -708,7 +727,7 @@ lame_report_def(const char *format, va_list args)
     fflush(stderr); /* an debug function should flush immediately */
 }
 
-void 
+void
 lame_report_fnc(lame_report_function print_f, const char *format, ...)
 {
     if (print_f) {
@@ -836,7 +855,7 @@ disable_FPE(void)
 
 
 
-#if defined(__FreeBSD__) && !defined(__alpha__)
+#if defined(__FreeBSD__) && defined(FP_X_INV) && defined(FP_X_DZ)
     {
         /* seet floating point mask to the Linux default */
         fp_except_t mask;
@@ -913,7 +932,7 @@ disable_FPE(void)
 #  define _FPU_SETCW(cw) __asm__ ("fldcw %0" : : "m" (*&cw))
 #  endif
 
-        /* 
+        /*
          * Set the Linux mask to abort on most FPE's
          * if bit is set, we _mask_ SIGFPE on that error!
          *  mask &= ~( _FPU_MASK_IM | _FPU_MASK_ZM | _FPU_MASK_OM | _FPU_MASK_UM );

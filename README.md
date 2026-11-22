@@ -253,7 +253,7 @@ art/                     应用图标的原始设计稿（PNG），据此生成�
 spec/                    每个功能的规格文档
 ```
 
-技术栈：Kotlin 2.4.21（AGP 9 内置 Kotlin 编译）、Jetpack Compose（BOM 2026.09.00）、Material 3、Media3 ExoPlayer 1.11.1、Coil 3.6.3、SILK v3 定点解码器与 LAME（源码随模块编译）、AGP 9.5.2、Gradle 9.9.2。
+技术栈：Kotlin 2.4.21（AGP 9 内置 Kotlin 编译）、Jetpack Compose（BOM 2026.09.00）、Material 3、Media3 ExoPlayer 1.11.1、Coil 3.6.3、SILK v3 定点解码器与 LAME 4.0（源码随模块编译）、AGP 9.5.2、Gradle 9.9.2。
 
 ## 已知限制
 

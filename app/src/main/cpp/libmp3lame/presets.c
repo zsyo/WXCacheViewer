@@ -2,7 +2,7 @@
  * presets.c -- Apply presets
  *
  *	Copyright (c) 2002-2008 Gabriel Bouvigne
- *	Copyright (c) 2007-2011 Robert Hegemann
+ *	Copyright (c) 2007-2012 Robert Hegemann
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -20,9 +20,9 @@
  */
 
 
-//#ifdef HAVE_CONFIG_H
-//# include <config.h>
-//#endif
+#ifdef HAVE_CONFIG_H
+# include <config.h>
+#endif
 
 #include "lame.h"
 #include "machine.h"
@@ -85,7 +85,7 @@ typedef struct {
 } vbr_presets_t;
 
     /* *INDENT-OFF* */
-    
+
     /* Switch mappings for VBR mode VBR_RH */
     static const vbr_presets_t vbr_old_switch_map[] = {
     /*vbr_q  qcomp_l  qcomp_s  expY  st_lrm   st_s  mask adj_l  adj_s  ath_lower  ath_curve  ath_sens  interChR  safejoint sfb21mod  msfix */
@@ -101,7 +101,7 @@ typedef struct {
         {9,       9,       9,    1,   6.60, 145.0,       1.6,    1.6,     -36,        11,        -25,   0.0008,         0,       0,  0,    5, 100},
         {10,      9,       9,    1,   6.60, 145.0,       2.0,    2.0,     -36,        12,        -25,   0.0008,         0,       0,  0,    5, 100}
     };
-    
+
     static const vbr_presets_t vbr_mt_psy_switch_map[] = {
     /*vbr_q  qcomp_l  qcomp_s  expY  st_lrm   st_s  mask adj_l  adj_s  ath_lower  ath_curve  ath_sens  ---  safejoint sfb21mod  msfix */
         {0,       9,       9,    0,   4.20,  25.0,      -6.8,   -6.8,       7.1,       1,          0,   0,         2,      31,  1.000,  5, 100},
@@ -205,7 +205,11 @@ apply_vbr_preset(lame_global_flags * gfp, int a, int enforce)
         gfp->VBR_q_frac = x;
     }
     gfp->internal_flags->cfg.minval = set->minval;
-    gfp->internal_flags->cfg.ATHfixpoint = set->ath_fixpoint;
+    {   /* take care of gain adjustments */
+        double const x = fabs(gfp->scale);
+        double const y = (x > 0.f) ? (10.f * log10(x)) : 0.f;
+        gfp->internal_flags->cfg.ATHfixpoint = set->ath_fixpoint - y;
+    }
 }
 
 static int
@@ -230,10 +234,10 @@ apply_abr_preset(lame_global_flags * gfp, int preset, int enforce)
 
     /* *INDENT-OFF* */
 
-    /* 
+    /*
      *  Switch mappings for ABR mode
      */
-    const abr_presets_t abr_switch_map[] = {        
+    const abr_presets_t abr_switch_map[] = {
     /* kbps  quant q_s safejoint nsmsfix st_lrm  st_s  scale   msk ath_lwr ath_curve  interch , sfscale */
       {  8,     9,  9,        0,      0,  6.60,  145,  0.95,    0,  -30.0,     11,    0.0012,        1}, /*   8, impossible to use in stereo */
       { 16,     9,  9,        0,      0,  6.60,  145,  0.95,    0,  -25.0,     11,    0.0010,        1}, /*  16 */
@@ -261,7 +265,7 @@ apply_abr_preset(lame_global_flags * gfp, int preset, int enforce)
     int     actual_bitrate = preset;
 
     r = nearestBitrateFullIndex(preset);
-    
+
     (void) lame_set_VBR(gfp, vbr_abr);
     (void) lame_set_VBR_mean_bitrate_kbps(gfp, (actual_bitrate));
     (void) lame_set_VBR_mean_bitrate_kbps(gfp, min_int(lame_get_VBR_mean_bitrate_kbps(gfp), 320));

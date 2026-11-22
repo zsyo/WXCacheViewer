@@ -26,14 +26,14 @@
   Contains functions which describe the version of LAME.
 
   \author A.L. Faber
-  \version \$Id: version.c,v 1.32.2.2 2011/11/18 09:18:28 robert Exp $
+  \version \$Id$
   \ingroup libmp3lame
 */
 
 
-//#ifdef HAVE_CONFIG_H
-//# include <config.h>
-//#endif
+#ifdef HAVE_CONFIG_H
+# include <config.h>
+#endif
 
 
 #include "lame.h"
@@ -79,7 +79,7 @@ get_lame_version(void)
 /*!
   It's mainly for inclusion into the MP3 stream.
 
-  \param void   
+  \param void
   \return a pointer to the short version of the LAME version string.
 */
 const char *
@@ -109,7 +109,7 @@ get_lame_short_version(void)
 /*!
   It's used in the LAME VBR tag only.
 
-  \param void   
+  \param void
   \return a pointer to the short version of the LAME version string.
 */
 const char *
@@ -124,7 +124,7 @@ get_lame_very_short_version(void)
 #elif LAME_RELEASE_VERSION && (LAME_PATCH_VERSION > 0)
 #define P "r"
 #else
-#define P ""
+#define P " "
 #endif
     static /*@observer@ */ const char *const str =
 #if (LAME_PATCH_VERSION > 0)
@@ -141,7 +141,27 @@ get_lame_very_short_version(void)
   It's used in the LAME VBR tag only, limited to 9 characters max.
   Due to some 3rd party HW/SW decoders, it has to start with LAME.
 
-  \param void   
+  \par Field width and format (fixed, binary-compatibility critical)
+  This string is copied into a **fixed 9-byte** field of the LAME tag that
+  gets embedded in every encoded MP3 stream (see \c VbrTag.c,
+  \c LAMEHEADERSIZE and the \c strncpy(...,9) call in the tag-writing code).
+  Widening that field would shift every subsequent byte of the tag and break
+  every third-party decoder that parses it at a fixed offset - it is not
+  adjustable. The format itself (`"LAME" major "." minor type`) is likewise
+  fixed for the same reason: some decoders reportedly pattern-match on it.
+
+  \par Byte budget
+  `strlen("LAME")` (4) + `strlen(major)` + `strlen(".")` (1) +
+  `strlen(minor)` + `strlen(type)` (1, always exactly one character:
+  `'a'`/`'b'`/`'r'`/`' '`) must not exceed 9, i.e.
+  \code
+      strlen(major) + strlen(minor) <= 3
+  \endcode
+  This invariant is enforced at compile time right below this function
+  (`compiletime_assert`) - if it ever trips, the version numbers (not this
+  field's width or format) are what needs to change.
+
+  \param void
   \return a pointer to the short version of the LAME version string.
  */
 const char*
@@ -153,6 +173,11 @@ get_lame_tag_encoder_short_version(void)
     ;
     return str;
 }
+
+/*! Enforces the byte budget documented above at compile time: catches an
+ *  overflow the moment a version bump reintroduces it, instead of letting
+ *  it silently truncate at run time. */
+compiletime_assert(sizeof("LAME" STR(LAME_MAJOR_VERSION) "." STR(LAME_MINOR_VERSION) P) - 1 <= 9);
 
 /*! Get the version string for GPSYCHO. */
 /*!
@@ -198,7 +223,7 @@ get_lame_url(void)
   Writes the numerical representation of the version of LAME and
   GPSYCHO into lvp.
 
-  \param lvp    
+  \param lvp
 */
 void
 get_lame_version_numerical(lame_version_t * lvp)

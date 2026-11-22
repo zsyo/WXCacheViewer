@@ -23,11 +23,11 @@
  * Boston, MA 02111-1307, USA.
  */
 
-/* $Id: encoder.c,v 1.111 2011/05/07 16:05:17 rbrito Exp $ */
+/* $Id$ */
 
-//#ifdef HAVE_CONFIG_H
-//#include <config.h>
-//#endif
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
 
 
 #include "lame.h"
@@ -40,6 +40,7 @@
 #include "lame-analysis.h"
 #include "bitstream.h"
 #include "VbrTag.h"
+#include "quantize.h"
 #include "quantize_pvt.h"
 
 
@@ -276,7 +277,7 @@ FFT's                    <---------1024---------->
     encoder acts on inbuf[ch][0], but output is delayed by MDCTDELAY
     so the MDCT coefficints are from inbuf[ch][-MDCTDELAY]
 
-    psy-model FFT has a 1 granule delay, so we feed it data for the 
+    psy-model FFT has a 1 granule delay, so we feed it data for the
     next granule.
     FFT is centered over granule:  224+576+224
     So FFT starts at:   576-224-MDCTDELAY
@@ -336,7 +337,7 @@ lame_encode_mp3_frame(       /* Output */
 
 
     /********************** padding *****************************/
-    /* padding method as described in 
+    /* padding method as described in
      * "MPEG-Layer3 / Bitstream Syntax and Decoding"
      * by Martin Sieler, Ralph Sperschneider
      *
@@ -469,7 +470,7 @@ lame_encode_mp3_frame(       /* Output */
                 gfc->pinfo->blocktype[gr][ch] = gfc->l3_side.tt[gr][ch].block_type;
                 gfc->pinfo->pe[gr][ch] = pe_use[gr][ch];
                 memcpy(gfc->pinfo->xr[gr][ch], &gfc->l3_side.tt[gr][ch].xr[0], sizeof(FLOAT) * 576);
-                /* in psymodel, LR and MS data was stored in pinfo.  
+                /* in psymodel, LR and MS data was stored in pinfo.
                    switch to MS data: */
                 if (gfc->ov_enc.mode_ext == MPG_MD_MS_LR) {
                     gfc->pinfo->ers[gr][ch] = gfc->pinfo->ers[gr][ch + 2];
@@ -515,7 +516,23 @@ lame_encode_mp3_frame(       /* Output */
             }
         }
     }
-    gfc->iteration_loop(gfc, (const FLOAT (*)[2])pe_use, ms_ener_ratio, masking);
+    switch (cfg->vbr)
+    {
+    default:
+    case vbr_off:
+        CBR_iteration_loop(gfc, (const FLOAT (*)[2])pe_use, ms_ener_ratio, masking);
+        break;
+    case vbr_abr:
+        ABR_iteration_loop(gfc, (const FLOAT (*)[2])pe_use, ms_ener_ratio, masking);
+        break;
+    case vbr_rh:
+        VBR_old_iteration_loop(gfc, (const FLOAT (*)[2])pe_use, ms_ener_ratio, masking);
+        break;
+    case vbr_mt:
+    case vbr_mtrh:
+        VBR_new_iteration_loop(gfc, (const FLOAT (*)[2])pe_use, ms_ener_ratio, masking);
+        break;
+    }
 
 
     /****************************************
