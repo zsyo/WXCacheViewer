@@ -137,7 +137,7 @@ keyPassword=你的密码
 
 ## GitHub Actions 自动构建与发布
 
-推送 `v` 开头的 tag（如 `v0.1.0`）会触发 `.github/workflows/release.yml`：自动装 JDK 25 与 NDK 28.2.13676358 / CMake 3.22.1，跑单测与 lint，用密钥签名后产出四个 ABI 包，逐个校验签名与 16 KB 页对齐，最后把四个 APK 一并附到对应的 GitHub Release 上。也可在 Actions 页面手动触发来验证流水线，手动触发不发布 Release。
+推送 `v` 开头的 tag（如 `v0.1.0`）会触发 `.github/workflows/release.yml`：自动装 JDK 25 与 NDK 30.0.16248370 / CMake 4.1.2，跑单测与 lint，用密钥签名后产出四个 ABI 包，逐个校验签名与 16 KB 页对齐，最后把四个 APK 一并附到对应的 GitHub Release 上。也可在 Actions 页面手动触发来验证流水线，手动触发不发布 Release。
 
 首次接入按下面步骤做一次：
 
@@ -220,7 +220,7 @@ hash = md5("mm" + uin)
 
 `voice2` 里的 `.amr` 与 AMR 无关，是 SILK v3，而且微信在标准 `#!SILK_V3` 头前面插了一个 `0x02` 私有字节、又去掉了结尾的 `0xFF 0xFF`，标准解码器读到首字节是 `0x02` 会直接帧同步失败。因此解码前要先剥掉这一个字节，再交给 SILK v3 定点解码器转成 wav 或 mp3。
 
-解码器与 LAME 的 C 源码放在 `app/src/main/cpp`，构建时由 CMake 一起编译，不用第三方预编译 so。原因不只是减少一个依赖：现成的 SILK 库 ELF 段只对齐到 4KB，在 16KB 页设备上会被系统判定成「页面大小兼容模式」，每次启动都弹兼容性对话框；自己编译可以把 LOAD 段对齐到 16KB（NDK r28 默认如此，链接参数里也显式写了 `-Wl,-z,max-page-size=16384`）。
+解码器与 LAME 的 C 源码放在 `app/src/main/cpp`，构建时由 CMake 一起编译，不用第三方预编译 so。原因不只是减少一个依赖：现成的 SILK 库 ELF 段只对齐到 4KB，在 16KB 页设备上会被系统判定成「页面大小兼容模式」，每次启动都弹兼容性对话框；自己编译可以把 LOAD 段对齐到 16KB（NDK r30 默认如此，链接参数里也显式写了 `-Wl,-z,max-page-size=16384` 作为防退化保险）。
 
 微信早期版本录音是 16kHz、新版是 24kHz，而 SILK 头里没有记录采样率。应用按「帧数 × 20ms」算出期望时长，用它校验解码结果的采样率，偏差超过 15% 就换 16kHz 重解一次，并把最终采样率写在 `.rate` 旁注文件里，命中缓存时不必重复校验。解码器是原生库且不保证线程安全，所有解码串行执行，失败统一转成界面提示。
 

@@ -10,8 +10,8 @@ lifecycle = "2.11.1"
 junit = "4.13.2"
 # Coil 3 的 Maven group 从 io.coil-kt 改为 io.coil-kt.coil3
 coil = "3.6.3"
-ndk = "28.2.13676358"
-cmake = "3.22.1"
+ndk = "30.0.16248370"
+cmake = "4.1.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }

@@ -23,7 +23,7 @@ android {
     // 避免本次依赖升级叠加运行时行为变更（root shell / 外部存储访问需单独回归）
     compileSdk = 37
 
-    // SILK 解码器随源码编译，NDK r28 起默认按 16KB 页对齐
+    // SILK 解码器随源码编译，NDK r30 仍默认按 16KB 页对齐，CMake 脚本里也显式保留链接参数
     ndkVersion = libs.versions.ndk.get()
 
     defaultConfig {
