@@ -30,7 +30,6 @@ class VoiceFormatTest {
         assertEquals(60L, VoiceFormat.durationMillisOfStandardSilk(terminated))
         // 不是 SILK 时不猜
         assertEquals(0L, VoiceFormat.durationMillisOfStandardSilk(amrHeader))
-        Unit
     }
 
     @Test

@@ -14,12 +14,8 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        maven { setUrl("https://maven.aliyun.com/repository/releases") }
-        maven { setUrl("https://maven.aliyun.com/repository/jcenter") }
-        maven { setUrl("https://maven.aliyun.com/repository/google") }
-        maven { setUrl("https://maven.aliyun.com/repository/central") }
-        maven { setUrl("https://maven.aliyun.com/repository/gradle-plugin") }
-        maven { setUrl("https://maven.aliyun.com/repository/public") }
+        // 只用官方仓库：CI 上阿里云镜像偶发 502，Gradle 会把它记为解析失败并拖垮 lint 工具依赖。
+        // 国内本机如需加速，可在 ~/.gradle/init.gradle.kts 里自行加镜像，不要写进仓库影响 CI。
         google()
         mavenCentral()
     }

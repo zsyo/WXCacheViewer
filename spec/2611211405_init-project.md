@@ -8,7 +8,7 @@
 - compileSdk/targetSdk 35，minSdk 24，jvmTarget 17。
 - 包名 `top.aico.wxcacheviewer`，中文应用名“微信缓存查看器”。
 - Android SDK 安装到 `E:/Dev/Android/Sdk`，JDK 17 路径写入 `gradle.properties`。
-- 仓库依赖优先阿里云镜像，保留 google()/mavenCentral()。
+- 依赖仓库使用 google()/mavenCentral()；阿里云镜像不要写进仓库（CI 上偶发 502 会导致依赖解析失败），本机加速可放到用户级 Gradle init 脚本。
 - 只放一个最小 Activity 与 MaterialTheme，不实现业务。
 
 ## 完成标准
