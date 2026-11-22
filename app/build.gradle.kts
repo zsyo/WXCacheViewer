@@ -68,8 +68,8 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
     // 按 ABI 分包：每个 APK 只带一套原生库，体积更小，用户下载对应架构即可。
     // 不生成 universal 包，避免分发时出现五个文件造成混淆。
@@ -98,11 +98,11 @@ android {
     }
 }
 
-// 内置 Kotlin 的 jvmTarget 默认跟随 compileOptions.targetCompatibility，这里显式固定为 17，
-// 让 ART 的脱糖负担保持与升级前一致（与运行 Gradle 的 JDK 21 无关）。
+// 内置 Kotlin 的 jvmTarget 默认跟随 compileOptions.targetCompatibility，这里显式固定为 21，
+// 与运行 Gradle 的 JDK 25 解耦；不跟到 25 是为了控制 ART 的脱糖负担与 R8 兼容性风险。
 kotlin {
     compilerOptions {
-        jvmTarget = JvmTarget.JVM_17
+        jvmTarget = JvmTarget.JVM_21
     }
 }
 
