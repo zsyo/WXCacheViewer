@@ -49,6 +49,10 @@ android {
     }
 
     buildTypes {
+        debug {
+            // 调试包用独立 applicationId，与正式包可共存，避免签名不同导致互相覆盖
+            applicationIdSuffix = "dev"
+        }
         release {
             signingConfig = if (hasReleaseKey) signingConfigs.getByName("release") else null
             isMinifyEnabled = true
