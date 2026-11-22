@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Environment
 import top.aico.wxcacheviewer.domain.model.SortDirection
 import top.aico.wxcacheviewer.domain.model.SortField
+import top.aico.wxcacheviewer.domain.update.UpdateChannel
 import java.io.File
 
 enum class GridMode { TWO, ONE }
@@ -80,6 +81,15 @@ class SettingsRepository(context: Context) {
     val exportRootDir: File
         get() = File(exportRootPath.ifBlank { defaultExportRootPath() })
 
+    /** 检查更新时使用的渠道，默认只提示正式版。 */
+    var updateChannel: UpdateChannel
+        get() = UpdateChannel.entries.firstOrNull {
+            it.name == preferences.getString(KEY_UPDATE_CHANNEL, null)
+        } ?: UpdateChannel.STABLE
+        set(value) {
+            preferences.edit().putString(KEY_UPDATE_CHANNEL, value.name).apply()
+        }
+
     @Suppress("DEPRECATION")
     fun defaultExportRootPath(): String = File(
         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
@@ -95,6 +105,7 @@ class SettingsRepository(context: Context) {
         const val KEY_PLAYBACK_VOLUME = "playback_volume"
         const val KEY_EXPORT_ROOT_PATH = "export_root_path"
         const val KEY_EXPORT_ROOT_URI = "export_root_uri"
+        const val KEY_UPDATE_CHANNEL = "update_channel"
         const val DEFAULT_EXPORT_DIR_NAME = "WXCacheViewer"
     }
 }

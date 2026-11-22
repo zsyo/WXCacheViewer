@@ -3,6 +3,7 @@ package top.aico.wxcacheviewer.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -12,6 +13,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.data.repository.SettingsRepository
+import top.aico.wxcacheviewer.data.update.UpdateCheckException
+import top.aico.wxcacheviewer.data.update.UpdateChecker
+import top.aico.wxcacheviewer.data.update.UpdateError
+import top.aico.wxcacheviewer.domain.update.ReleaseInfo
+import top.aico.wxcacheviewer.domain.update.SemanticVersion
+import top.aico.wxcacheviewer.domain.update.UpdateChannel
+import top.aico.wxcacheviewer.ui.common.AppInfo
 import top.aico.wxcacheviewer.ui.common.formatFileSize
 import java.io.File
 
@@ -23,6 +31,10 @@ data class SettingsUiState(
     val cacheBytes: Long = 0L,
     val cacheScanning: Boolean = true,
     val cacheClearing: Boolean = false,
+    val updateChannel: UpdateChannel = UpdateChannel.STABLE,
+    val checkingUpdate: Boolean = false,
+    /** 手动检查发现新版本时非空，界面据此弹窗；关闭后置空。 */
+    val updateRelease: ReleaseInfo? = null,
     val notice: String? = null
 )
 
@@ -37,10 +49,16 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val cacheDir: File
         get() = getApplication<Application>().cacheDir
 
+    /** 检查更新只有一个 GET，构造时不会发起任何请求。 */
+    private val updateChecker = UpdateChecker(
+        userAgent = "${UpdateChecker.DEFAULT_USER_AGENT}/${AppInfo.versionName(application)}"
+    )
+
     private val _uiState = MutableStateFlow(
         SettingsUiState(
             exportRootPath = settings.exportRootDir.absolutePath,
-            exportRootCustom = settings.exportRootPath.isNotBlank()
+            exportRootCustom = settings.exportRootPath.isNotBlank(),
+            updateChannel = settings.updateChannel
         )
     )
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
@@ -111,8 +129,77 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun setUpdateChannel(channel: UpdateChannel) {
+        if (_uiState.value.updateChannel == channel) return
+        settings.updateChannel = channel
+        _uiState.update { it.copy(updateChannel = channel) }
+    }
+
+    /**
+     * 手动检查更新。整个应用只有这一个入口会联网，启动、切页、回到前台都不会触发。
+     */
+    fun checkForUpdate() {
+        if (_uiState.value.checkingUpdate) return
+        val channel = _uiState.value.updateChannel
+        _uiState.update { it.copy(checkingUpdate = true, notice = null) }
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val outcome = withContext(Dispatchers.IO) {
+                try {
+                    Result.success(updateChecker.fetchLatest(channel))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Result.failure(e)
+                }
+            }
+            val currentName = AppInfo.versionName(app)
+            val current = SemanticVersion.parse(currentName)
+            _uiState.update { state ->
+                val failure = outcome.exceptionOrNull()
+                if (failure != null) {
+                    return@update state.copy(
+                        checkingUpdate = false,
+                        notice = updateFailureMessage(failure)
+                    )
+                }
+                val release = outcome.getOrNull()
+                when {
+                    release == null -> state.copy(
+                        checkingUpdate = false,
+                        notice = app.getString(R.string.settings_update_no_release)
+                    )
+                    // 版本号解析不出来（手动构建的 dev-xxxx）时不比较，直接给出最新版本
+                    current != null && release.version <= current -> state.copy(
+                        checkingUpdate = false,
+                        notice = app.getString(R.string.settings_update_up_to_date, currentName)
+                    )
+                    else -> state.copy(checkingUpdate = false, updateRelease = release)
+                }
+            }
+        }
+    }
+
+    fun consumeUpdateRelease() {
+        _uiState.update { it.copy(updateRelease = null) }
+    }
+
     fun consumeNotice() {
         _uiState.update { it.copy(notice = null) }
+    }
+
+    private fun updateFailureMessage(failure: Throwable): String {
+        val app = getApplication<Application>()
+        val cause = failure as? UpdateCheckException
+        return when (cause?.error) {
+            UpdateError.NETWORK, null -> app.getString(R.string.settings_update_failed_network)
+            UpdateError.RATE_LIMIT -> app.getString(R.string.settings_update_failed_rate_limit)
+            UpdateError.HTTP -> app.getString(
+                R.string.settings_update_failed_http,
+                cause.detail.orEmpty()
+            )
+            UpdateError.PARSE -> app.getString(R.string.settings_update_failed_parse)
+        }
     }
 
     private fun sizeOf(dir: File): Long =

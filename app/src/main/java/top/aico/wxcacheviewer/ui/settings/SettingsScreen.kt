@@ -2,6 +2,7 @@ package top.aico.wxcacheviewer.ui.settings
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.provider.DocumentsContract
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,6 +31,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -54,6 +57,8 @@ import androidx.core.net.toUri
 import kotlinx.coroutines.launch
 import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.domain.ExportLocation
+import top.aico.wxcacheviewer.domain.update.UpdateChannel
+import top.aico.wxcacheviewer.ui.common.AppInfo
 import top.aico.wxcacheviewer.ui.common.formatFileSize
 import top.aico.wxcacheviewer.viewmodel.SettingsUiState
 
@@ -74,6 +79,9 @@ fun SettingsScreen(
     onResetExportRoot: () -> Unit,
     onRefreshCacheSize: () -> Unit,
     onClearCache: () -> Unit,
+    onCheckUpdate: () -> Unit,
+    onDismissUpdate: () -> Unit,
+    onSetUpdateChannel: (UpdateChannel) -> Unit,
     onNoticeShown: () -> Unit
 ) {
     val context = LocalContext.current
@@ -82,7 +90,8 @@ fun SettingsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     var dialog by remember { mutableStateOf<AboutDialog?>(null) }
     var showClearConfirm by remember { mutableStateOf(false) }
-    val versionName = remember { versionName(context) }
+    var showChannelPicker by remember { mutableStateOf(false) }
+    val versionName = remember { AppInfo.versionName(context) }
 
     // 关于页的链接一律走系统浏览器，没有能处理的应用时给提示
     val openLink: (String) -> Unit = { url ->
@@ -172,6 +181,10 @@ fun SettingsScreen(
             SectionTitle(stringResource(id = R.string.settings_section_about))
             AboutCard(
                 versionName = versionName,
+                updateChannel = state.updateChannel,
+                checkingUpdate = state.checkingUpdate,
+                onCheckUpdate = onCheckUpdate,
+                onChooseChannel = { showChannelPicker = true },
                 onOpenRepository = { openLink(REPOSITORY_URL) },
                 onOpenDeveloper = { openLink(DEVELOPER_URL) },
                 onShowLicense = { dialog = AboutDialog.LICENSE },
@@ -223,6 +236,140 @@ fun SettingsScreen(
                 }
             }
         )
+    }
+
+    if (showChannelPicker) {
+        AlertDialog(
+            onDismissRequest = { showChannelPicker = false },
+            title = { Text(stringResource(id = R.string.settings_update_channel)) },
+            text = {
+                Column {
+                    ChannelOption(
+                        label = stringResource(id = R.string.settings_update_channel_stable),
+                        description = stringResource(
+                            id = R.string.settings_update_channel_stable_desc
+                        ),
+                        selected = state.updateChannel == UpdateChannel.STABLE,
+                        onClick = {
+                            onSetUpdateChannel(UpdateChannel.STABLE)
+                            showChannelPicker = false
+                        }
+                    )
+                    ChannelOption(
+                        label = stringResource(id = R.string.settings_update_channel_prerelease),
+                        description = stringResource(
+                            id = R.string.settings_update_channel_prerelease_desc
+                        ),
+                        selected = state.updateChannel == UpdateChannel.PRERELEASE,
+                        onClick = {
+                            onSetUpdateChannel(UpdateChannel.PRERELEASE)
+                            showChannelPicker = false
+                        }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showChannelPicker = false }) {
+                    Text(stringResource(id = R.string.settings_close))
+                }
+            }
+        )
+    }
+
+    val release = state.updateRelease
+    if (release != null) {
+        AlertDialog(
+            onDismissRequest = onDismissUpdate,
+            title = {
+                Text(stringResource(id = R.string.settings_update_available_title, release.tagName))
+            },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(stringResource(id = R.string.settings_update_current, versionName))
+                    Text(
+                        text = stringResource(
+                            id = R.string.settings_update_latest,
+                            if (release.prerelease) {
+                                stringResource(
+                                    id = R.string.settings_update_tag_prerelease,
+                                    release.tagName
+                                )
+                            } else {
+                                release.tagName
+                            }
+                        )
+                    )
+                    if (release.publishedAt.isNotBlank()) {
+                        Text(
+                            stringResource(
+                                id = R.string.settings_update_published,
+                                release.publishedAt
+                            )
+                        )
+                    }
+                    if (release.notes.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = stringResource(id = R.string.settings_update_notes_title),
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = release.notes,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        // CI 按 ABI 拆包，优先给本机架构的直链，找不到时退回 Release 页面
+                        openLink(release.downloadUrlFor(Build.SUPPORTED_ABIS.toList()))
+                        onDismissUpdate()
+                    }
+                ) {
+                    Text(stringResource(id = R.string.settings_update_download))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismissUpdate) {
+                    Text(stringResource(id = R.string.settings_close))
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun ChannelOption(
+    label: String,
+    description: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Spacer(modifier = Modifier.width(8.dp))
+        Column {
+            Text(text = label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -364,6 +511,10 @@ private fun CacheCard(
 @Composable
 private fun AboutCard(
     versionName: String,
+    updateChannel: UpdateChannel,
+    checkingUpdate: Boolean,
+    onCheckUpdate: () -> Unit,
+    onChooseChannel: () -> Unit,
     onOpenRepository: () -> Unit,
     onOpenDeveloper: () -> Unit,
     onShowLicense: () -> Unit,
@@ -400,6 +551,38 @@ private fun AboutCard(
 
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
             AboutRow(
+                title = stringResource(id = R.string.settings_update_channel),
+                value = stringResource(
+                    id = if (updateChannel == UpdateChannel.PRERELEASE) {
+                        R.string.settings_update_channel_prerelease
+                    } else {
+                        R.string.settings_update_channel_stable
+                    }
+                ),
+                onClick = onChooseChannel
+            )
+            AboutRow(
+                title = stringResource(id = R.string.settings_update_check),
+                value = if (checkingUpdate) {
+                    stringResource(id = R.string.settings_update_checking)
+                } else {
+                    null
+                },
+                // 检查期间不响应点击，避免重复请求
+                onClick = if (checkingUpdate) null else onCheckUpdate,
+                trailing = if (checkingUpdate) {
+                    {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                    }
+                } else {
+                    null
+                }
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            AboutRow(
                 title = stringResource(id = R.string.settings_about_repo),
                 value = "zsyo/WXCacheViewer",
                 onClick = onOpenRepository
@@ -429,7 +612,8 @@ private fun AboutCard(
 private fun AboutRow(
     title: String,
     value: String? = null,
-    onClick: (() -> Unit)? = null
+    onClick: (() -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null
 ) {
     val base = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick)
     Row(
@@ -450,7 +634,10 @@ private fun AboutRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        if (onClick != null) {
+        if (trailing != null) {
+            Spacer(modifier = Modifier.width(8.dp))
+            trailing()
+        } else if (onClick != null) {
             Icon(
                 painter = painterResource(id = R.drawable.ic_chevron_right),
                 contentDescription = null,
@@ -459,19 +646,6 @@ private fun AboutRow(
         }
     }
 }
-
-private fun versionName(context: Context): String = runCatching {
-    val packageManager = context.packageManager
-    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-        packageManager.getPackageInfo(
-            context.packageName,
-            android.content.pm.PackageManager.PackageInfoFlags.of(0)
-        ).versionName.orEmpty()
-    } else {
-        @Suppress("DEPRECATION")
-        packageManager.getPackageInfo(context.packageName, 0).versionName.orEmpty()
-    }
-}.getOrDefault("")
 
 private fun openUrl(context: Context, url: String): Boolean = runCatching {
     context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))

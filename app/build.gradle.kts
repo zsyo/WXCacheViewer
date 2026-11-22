@@ -141,5 +141,7 @@ dependencies {
     implementation(libs.coil.gif)
 
     testImplementation(libs.junit)
+    // 检查更新的 JSON 解析要真实现，android.jar 里的 org.json 只是桩
+    testImplementation(libs.json)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

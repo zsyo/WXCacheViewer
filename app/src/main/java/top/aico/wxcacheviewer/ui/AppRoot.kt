@@ -99,6 +99,9 @@ fun AppRoot(
                             onResetExportRoot = settingsViewModel::resetExportRoot,
                             onRefreshCacheSize = settingsViewModel::refreshCacheSize,
                             onClearCache = settingsViewModel::clearCache,
+                            onCheckUpdate = settingsViewModel::checkForUpdate,
+                            onDismissUpdate = settingsViewModel::consumeUpdateRelease,
+                            onSetUpdateChannel = settingsViewModel::setUpdateChannel,
                             onNoticeShown = settingsViewModel::consumeNotice
                         )
                     }

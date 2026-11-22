@@ -8,6 +8,8 @@ coreKtx = "1.19.1"
 activityCompose = "1.13.0"
 lifecycle = "2.11.1"
 junit = "4.13.2"
+# 仅测试用：android.jar 里的 org.json 是抛异常的桩实现，单测解析要真实现
+json = "20260814"
 # Coil 3 的 Maven group 从 io.coil-kt 改为 io.coil-kt.coil3
 coil = "3.6.3"
 ndk = "30.0.16248370"
@@ -30,6 +32,7 @@ androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.re
 coil-compose = { group = "io.coil-kt.coil3", name = "coil-compose", version.ref = "coil" }
 coil-gif = { group = "io.coil-kt.coil3", name = "coil-gif", version.ref = "coil" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+json = { group = "org.json", name = "json", version.ref = "json" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
