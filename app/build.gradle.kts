@@ -44,6 +44,10 @@ android {
                 keyAlias = System.getenv("KEY_ALIAS") ?: keystoreProps.getProperty("keyAlias")
                 keyPassword = System.getenv("KEY_PASSWORD")
                     ?: keystoreProps.getProperty("keyPassword")
+                // v2 保证整文件覆盖与快速校验；v3 附带密钥轮换谱系，为日后换密钥留路。
+                // v1 仅面向 Android 6 及以下（minSdk 24 用不到），v4 仅增量安装需要，均不启用。
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }
