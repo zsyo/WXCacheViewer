@@ -22,6 +22,9 @@ android {
     // Compose 1.12 / Coil 3.6 起要求 compileSdk 37；targetSdk 保持 35，
     // 避免本次依赖升级叠加运行时行为变更（root shell / 外部存储访问需单独回归）
     compileSdk = 37
+    // AGP 9.5 默认用 build-tools 36.0.0，与 compileSdk 不绑定。这里显式钉到 37.0.0，
+    // 让编译与签名/对齐校验（CI 的 apksigner、zipalign）共用同一套工具，避免多装一份 36。
+    buildToolsVersion = "37.0.0"
 
     // SILK 解码器随源码编译，NDK r30 仍默认按 16KB 页对齐，CMake 脚本里也显式保留链接参数
     ndkVersion = libs.versions.ndk.get()
