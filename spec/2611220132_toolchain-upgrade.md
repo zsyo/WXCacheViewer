@@ -19,7 +19,7 @@
 
 说明：
 
-- Gemini 建议中的 "AGP 9.5.1" 并不存在，最新稳定版是 9.5.0（2026-11-05）；9.5.1 是 Gradle 的版本号。
+- 本次升级时 Gemini 建议中的 "AGP 9.5.1" 尚不存在，最新稳定版是 9.5.0（2026-11-05）；9.5.1 当时是 Gradle 的版本号。后续 Google 已发布 9.5.1/9.5.2，见 `spec/2611221603_agp-952.md`。
 - Gradle 9.9.2（2026-11-20）修复了 4 个安全漏洞，直接用最新版，不用 9.6.0。
 - Kotlin 2.4.21 为当前稳定版，Compose Compiler 从 2.0 起随 KGP 分发，不再单独声明 `kotlinCompilerExtensionVersion`。
 - AGP 9 要求 Build Tools 最低 36.0.0；NDK 28.2.13676358 与 CMake 3.22.1 恰好是 AGP 9 的默认版本，保持不变。

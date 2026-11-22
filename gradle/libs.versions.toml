@@ -1,5 +1,5 @@
 [versions]
-agp = "9.5.0"
+agp = "9.5.2"
 kotlin = "2.4.21"
 # Compose 1.12 / Coil 3.6 起要求 compileSdk 37，BOM 与两者配套升级
 composeBom = "2026.09.00"
