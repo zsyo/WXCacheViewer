@@ -82,6 +82,7 @@ import kotlinx.coroutines.launch
 import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.data.audio.VoicePlayer
 import top.aico.wxcacheviewer.data.audio.VoicePreparer
+import top.aico.wxcacheviewer.data.emoji.EmojiKeyStore
 import top.aico.wxcacheviewer.data.image.CoilImageLoaders
 import top.aico.wxcacheviewer.data.log.AppLog
 import top.aico.wxcacheviewer.data.media.MediaPreparer
@@ -151,7 +152,9 @@ fun GalleryScreen(
     val context = LocalContext.current
     val resources = LocalResources.current
     val thumbnailLoader = remember { ThumbnailLoader(context, RootCommandExecutor()) }
-    val mediaPreparer = remember { MediaPreparer(context, RootCommandExecutor()) }
+    val mediaPreparer = remember {
+        MediaPreparer(context, RootCommandExecutor(), EmojiKeyStore(RootCommandExecutor()))
+    }
     LaunchedEffect(accountHash) {
         thumbnailLoader.clear()
     }

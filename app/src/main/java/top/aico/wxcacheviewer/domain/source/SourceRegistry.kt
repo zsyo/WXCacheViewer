@@ -10,7 +10,10 @@ object SourceRegistry {
 
     private val FINDER_VIDEO_NAME = Regex("^finder_video(?:_xWT[0-9]+)?__?[0-9a-f]{32}$")
     private val CHAT_VIDEO_NAME = Regex("^[0-9]{12,20}\\.mp4$")
-    private val EMOJI_NAME = Regex("^[0-9a-f]{32}_(?:gif|cover|thumb)$")
+    private val EMOJI_NAME = Regex("^[0-9a-f]{32}(?:_(?:gif|cover|thumb))?$")
+
+    /** 裸 32 位 md5：表情目录里头部被 AES 加密的那一类文件。 */
+    private val EMOJI_ENCRYPTED_NAME = Regex("^[0-9a-f]{32}$")
     private val CHAT_IMAGE_PATH = Regex("^(?:[0-9a-f]{2}/){1,3}th_[0-9a-f]{32}$")
     private val SNS_PATH = Regex("^(?:[0-9a-f]{1,2}/){1,3}(?:snst|snsu)_[0-9]+$")
 
@@ -48,8 +51,11 @@ object SourceRegistry {
     )
 
     /**
-     * 表情：只收 `_gif`（动图）、`_cover`、`_thumb`（表情包封面）。
-     * 裸 32 位 md5 的文件是加密数据，无法解码，因此不在白名单内。
+     * 表情：`_gif`（动图）、`_cover`、`_thumb`（封面）三种是明文；
+     * 裸 32 位 md5 是「只有前 1024 字节被 AES 加密」的文件，解密后与 `_gif` 完全一致，
+     * 因此同时存在 `_gif` 时跳过裸文件，避免同一张表情出现两遍。
+     *
+     * 裸文件解密后可能是 GIF/PNG/JPEG，也可能是微信私有的 wxgf（HEVC，暂不解码）。
      */
     val EMOJI = CacheSource(
         id = "emoji",
@@ -59,8 +65,10 @@ object SourceRegistry {
         relativePathRegex = EMOJI_NAME,
         exportTag = "wxemoji",
         exportKind = ExportKind.PICTURES,
-        globs = listOf("*_gif", "*_cover", "*_thumb"),
-        probeHeader = true
+        globs = listOf("*"),
+        probeHeader = true,
+        encryptedName = EMOJI_ENCRYPTED_NAME,
+        skipSiblingSuffix = "_gif"
     )
 
     /** 聊天图片缩略图：两级十六进制子目录下的 `th_` 前缀 JPEG。 */

@@ -166,8 +166,9 @@ object WxPaths {
         val sizeExpression = sizeExpression(useWcForSize)
         val headerExpression = headerExpression(source)
         val thumbExpression = thumbExpression(source)
+        val skipExpression = skipSiblingExpression(source)
         val end = offset + limit
-        return listOf(
+        return listOfNotNull(
             "D=$dir",
             "[ -d \"\$D\" ] || exit 0",
             "i=0",
@@ -175,6 +176,7 @@ object WxPaths {
             "  case \"\$n\" in $patterns) ;; *) continue ;; esac",
             "  f=\"\$D/\$n\"",
             "  [ -f \"\$f\" ] || continue",
+            skipExpression,
             "  i=\$((i+1))",
             "  if [ \"\$i\" -le $offset ]; then continue; fi",
             "  if [ \"\$i\" -gt $end ]; then break; fi",
@@ -185,6 +187,15 @@ object WxPaths {
         ).joinToString("\n")
     }
 
+    /**
+     * 「已有明文兄弟就跳过」的 shell 片段：表情裸 md5 与 `<md5>_gif` 解密后内容相同，
+     * 让 shell 在计数前就跳过，页内条数与游标才对得上。
+     */
+    private fun skipSiblingExpression(source: CacheSource): String? =
+        source.skipSiblingSuffix?.let { suffix ->
+            "  if [ -f \"\$D/\${n}$suffix\" ]; then continue; fi"
+        }
+
     private fun flatListSourceCommand(
         hash: String,
         source: CacheSource,
@@ -192,9 +203,14 @@ object WxPaths {
     ): String {
         val dir = shellQuote(sourceDir(hash, source))
         val patterns = source.globs.joinToString(" ") { "$dir/$it" }
-        return listOf(
+        val skipExpression = source.skipSiblingSuffix?.let { suffix ->
+            "  if [ -f \"\$D/\${f##*/}$suffix\" ]; then continue; fi"
+        }
+        return listOfNotNull(
+            "D=$dir",
             "for f in $patterns; do",
             "  [ -f \"\$f\" ] || continue",
+            skipExpression,
             "  printf '%s\\t%s\\t%s\\t' \"\$(basename \"\$f\")\" \"\$(${sizeExpression(useWcForSize)})\" \"\$(stat -c %Y \"\$f\" 2>/dev/null || echo 0)\"",
             "  ${headerExpression(source)}",
             "  printf '\\t%s\\t%s\\n' \"\$(basename \"\$f\")\" \"${thumbExpression(source)}\"",
@@ -384,6 +400,17 @@ object WxPaths {
         return LOGIN_PREF_FIELDS.joinToString("\n") { field ->
             "grep -o " + shellQuote("name=\"$field\">[^<]*") + " $file 2>/dev/null || true"
         }
+    }
+
+    /**
+     * 只取最后登录账号的 uin，供表情解密推导密钥。
+     *
+     * 与 [readLoginPrefsCommand] 分开是为了少读字段：表情解密只关心 uin，
+     * 不需要把昵称一起带出来。
+     */
+    fun readLoginUinCommand(): String {
+        val file = shellQuote(LOGIN_PREFS_FILE)
+        return "grep -o " + shellQuote("name=\"last_login_uin\">[0-9]*") + " $file 2>/dev/null || true"
     }
 
     private val LOGIN_PREF_FIELDS = listOf("last_login_nick_name", "last_login_uin")

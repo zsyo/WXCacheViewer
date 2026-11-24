@@ -218,6 +218,20 @@ class WxPathsTest {
     }
 
     @Test
+    fun emojiPageSkipsBareFileWhenGifSiblingExists() {
+        val command = WxPaths.listSourcePageCommand(hash, SourceRegistry.EMOJI, 0, 60)
+        // 裸 md5 与 `<md5>_gif` 解密后内容相同，计数前就跳过，页内条数与游标才对得上
+        assertTrue(command.contains("if [ -f \"\$D/\${n}_gif\" ]; then continue; fi"))
+    }
+
+    @Test
+    fun chainedCommandsHaveNoSiblingCheck() {
+        // 其它缓存源没有 _gif 兄弟文件的概念，不能平白多一次 stat
+        val command = WxPaths.listSourcePageCommand(hash, SourceRegistry.CHAT_VIDEO, 0, 60)
+        assertFalse(command.contains("_gif"))
+    }
+
+    @Test
     fun flatSourceCannotBePaged() {
         try {
             WxPaths.listSourceDirPageCommand(hash, SourceRegistry.CHAT_VIDEO, "00")

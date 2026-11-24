@@ -93,7 +93,12 @@ data class CacheFile(
     /** 所属缓存源，见 SourceRegistry。 */
     val sourceId: String = "finder_video",
     /** 同目录下是否有同名 jpg 首帧（聊天视频）。 */
-    val hasThumbnail: Boolean = false
+    val hasThumbnail: Boolean = false,
+    /**
+     * 文件头部被加密（表情目录里裸 32 位 md5 的那一类）。
+     * 读取、预览、导出前都要先用 [top.aico.wxcacheviewer.domain.emoji.EmojiCrypto] 解开前 1024 字节。
+     */
+    val encrypted: Boolean = false
 ) {
     /**
      * 跨缓存源唯一的标识：列表 key、多选集合元素、图片缓存键都用它。

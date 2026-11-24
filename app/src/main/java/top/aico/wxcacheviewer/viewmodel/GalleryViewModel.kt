@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.data.audio.VoicePreparer
+import top.aico.wxcacheviewer.data.emoji.EmojiKeyStore
+import top.aico.wxcacheviewer.data.emoji.EmojiPreparer
 import top.aico.wxcacheviewer.data.repository.CacheRepository
 import top.aico.wxcacheviewer.data.repository.GridMode
 import top.aico.wxcacheviewer.data.repository.PageCursor
@@ -71,9 +73,18 @@ data class GalleryUiState(
 
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
     private val settings = SettingsRepository(application)
-    private val repository = CacheRepository(RootCommandExecutor())
+
+    /** 表情解密密钥：由最后登录账号的 uin 推导，且要校验属于当前账号目录。 */
+    private val emojiKeys = EmojiKeyStore(RootCommandExecutor())
+    private val repository = CacheRepository(RootCommandExecutor(), emojiKeys)
+
     /** 语音要先解码再导出，导出逻辑与其它缓存源不同。 */
     private val voicePreparer by lazy { VoicePreparer(application, RootCommandExecutor()) }
+
+    /** 加密表情导出前要先解开头部，否则导出的是一份打不开的文件。 */
+    private val emojiPreparer by lazy {
+        EmojiPreparer(application, RootCommandExecutor(), emojiKeys)
+    }
     private val _uiState = MutableStateFlow(
         GalleryUiState(
             gridMode = settings.gridMode,
@@ -419,13 +430,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     private data class ExportTarget(val directory: File, val label: String)
 
-    /** 语音要先转码再落盘，其余缓存源直接 root 复制。 */
-    private suspend fun exportSingle(file: CacheFile, directory: File): File =
-        if (SourceRegistry.byId(file.sourceId).exportKind == ExportKind.MUSIC) {
+    /** 语音要先转码、加密表情要先解密，其余缓存源直接 root 复制。 */
+    private suspend fun exportSingle(file: CacheFile, directory: File): File = when {
+        SourceRegistry.byId(file.sourceId).exportKind == ExportKind.MUSIC ->
             voicePreparer.export(file, directory)
-        } else {
-            repository.exportFile(file, directory)
-        }
+        file.encrypted -> emojiPreparer.export(file, directory)
+        else -> repository.exportFile(file, directory)
+    }
 
     /** 语音导出成 mp3（真 AMR 则原样导出），MIME 要跟着实际扩展名走。 */
     private fun mimeOf(file: CacheFile, exported: File): String = when {

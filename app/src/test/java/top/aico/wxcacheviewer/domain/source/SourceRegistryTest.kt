@@ -10,15 +10,20 @@ class SourceRegistryTest {
     private val md5 = "9213f8de4b8e6b5534fd84c15ddc358d"
 
     @Test
-    fun emojiAcceptsPlainTextVariantsOnly() {
+    fun emojiAcceptsPlainTextAndEncryptedNames() {
         val emoji = SourceRegistry.EMOJI
         assertTrue(SourceRegistry.isValidRelativePath(emoji, "${md5}_gif"))
         assertTrue(SourceRegistry.isValidRelativePath(emoji, "${md5}_cover"))
         assertTrue(SourceRegistry.isValidRelativePath(emoji, "${md5}_thumb"))
-        // 裸 md5 是加密文件，不解码也不展示
-        assertFalse(SourceRegistry.isValidRelativePath(emoji, md5))
+        // 裸 md5 的头部是密文，解密后再判断真实类型
+        assertTrue(SourceRegistry.isValidRelativePath(emoji, md5))
+        assertTrue(emoji.encryptedName!!.matches(md5))
+        assertFalse(emoji.encryptedName!!.matches("${md5}_gif"))
+        // 与 _gif 内容相同的裸文件由 shell 跳过，避免同一张表情出现两遍
+        assertEquals("_gif", emoji.skipSiblingSuffix)
         assertFalse(SourceRegistry.isValidRelativePath(emoji, "${md5}_gif/../x"))
         assertFalse(SourceRegistry.isValidRelativePath(emoji, "../${md5}_gif"))
+        assertFalse(SourceRegistry.isValidRelativePath(emoji, "${md5}_other"))
     }
 
     @Test

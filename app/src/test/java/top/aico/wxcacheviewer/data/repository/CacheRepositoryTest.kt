@@ -8,6 +8,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
 import top.aico.wxcacheviewer.data.root.ShellResult
+import top.aico.wxcacheviewer.domain.emoji.EmojiCrypto
+import top.aico.wxcacheviewer.domain.emoji.EmojiKeyProvider
 import top.aico.wxcacheviewer.domain.model.CacheFile
 import top.aico.wxcacheviewer.domain.model.FileType
 import top.aico.wxcacheviewer.domain.source.SourceRegistry
@@ -253,6 +255,49 @@ class CacheRepositoryTest {
         // 默认一页 60 个；命令里体现为「跳过 0 个、超过 60 个就 break」
         assertTrue(executor.commands[0].contains("-le 0 ]"))
         assertTrue(executor.commands[0].contains("-gt 60 ]"))
+    }
+
+    /** 用示例 uin 派生密钥，把明文头部加密成「微信那种只有前 1KB 是密文」的文件头。 */
+    private fun encryptedHeaderHex(plain: ByteArray, key: ByteArray): String {
+        val cipher = javax.crypto.Cipher.getInstance("AES/ECB/NoPadding")
+        cipher.init(
+            javax.crypto.Cipher.ENCRYPT_MODE,
+            javax.crypto.spec.SecretKeySpec(key, "AES")
+        )
+        return cipher.doFinal(plain).joinToString(separator = "") { "%02X".format(it) }
+    }
+
+    private fun encryptedEmojiLine(md5: String, headerHex: String): String =
+        "$md5\t1000\t1795000000\t$headerHex\t$md5\t0"
+
+    @Test
+    fun encryptedEmojiIsDecryptedForTypeDetection() = runBlocking {
+        val key = EmojiCrypto.keyOf("1000000001")!!
+        val md5 = "9213f8de4b8e6b5534fd84c15ddc358d"
+        // 明文是 GIF89a 开头，但落盘的是密文，直接按文件头判断只会得到 UNKNOWN
+        val plain = "GIF89a".toByteArray() + ByteArray(26) { it.toByte() }
+        val executor = FakeExecutor(
+            ShellResult(encryptedEmojiLine(md5, encryptedHeaderHex(plain, key)), 0, "")
+        )
+        val repo = CacheRepository(executor, EmojiKeyProvider { key })
+
+        val page = repo.loadPage(hash, listOf(SourceRegistry.EMOJI), null)
+
+        assertEquals(1, page.files.size)
+        assertEquals(FileType.GIF, page.files[0].type)
+        assertTrue(page.files[0].encrypted)
+    }
+
+    @Test
+    fun encryptedEmojiWithoutKeyIsSkippedSilently() = runBlocking {
+        val md5 = "9213f8de4b8e6b5534fd84c15ddc358d"
+        val executor = FakeExecutor(ShellResult(encryptedEmojiLine(md5, "00".repeat(32)), 0, ""))
+
+        val page = CacheRepository(executor).loadPage(hash, listOf(SourceRegistry.EMOJI), null)
+
+        // 没有 uin 就拿不到密钥，这一类文件不展示；整页被跳过不算「格式异常」
+        assertTrue(page.files.isEmpty())
+        assertNull(page.error)
     }
 
     @Test

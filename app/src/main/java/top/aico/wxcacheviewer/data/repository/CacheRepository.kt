@@ -9,6 +9,8 @@ import top.aico.wxcacheviewer.data.root.RootState
 import top.aico.wxcacheviewer.data.root.WxPaths
 import top.aico.wxcacheviewer.domain.ExportNaming
 import top.aico.wxcacheviewer.domain.FileTypeDetector
+import top.aico.wxcacheviewer.domain.emoji.EmojiCrypto
+import top.aico.wxcacheviewer.domain.emoji.EmojiKeyProvider
 import top.aico.wxcacheviewer.domain.model.Account
 import top.aico.wxcacheviewer.domain.model.CacheFile
 import top.aico.wxcacheviewer.domain.model.FileType
@@ -42,7 +44,11 @@ data class SourcePage(
     val error: String? = null
 )
 
-class CacheRepository(private val executor: RootCommandExecutor) {
+class CacheRepository(
+    private val executor: RootCommandExecutor,
+    /** 表情解密密钥；拿不到时表情页退回只展示明文文件。 */
+    private val emojiKeys: EmojiKeyProvider = EmojiKeyProvider.None
+) {
 
     /** 顶层子目录列表只在内存里缓存，下拉刷新时清空。多个加载协程会并发读写，用并发容器。 */
     private val subDirCache = ConcurrentHashMap<String, List<String>>()
@@ -81,13 +87,17 @@ class CacheRepository(private val executor: RootCommandExecutor) {
         var index = cursor?.sourceIndex ?: 0
         var position = cursor?.position ?: 0
         var skipped = 0
+        // 表情的加密文件需要密钥才能判断真实类型；没有密钥就整类跳过，避免点开是乱码。
+        val emojiKey = sources
+            .firstOrNull { it.encryptedName != null }
+            ?.let { emojiKeys.keyFor(hash) }
 
         while (index < sources.size) {
             val source = sources[index]
             val slice = if (source.recursive) {
                 dirSlice(hash, source, position)
             } else {
-                flatSlice(hash, source, position)
+                flatSlice(hash, source, position, emojiKey)
             }
             val next = when {
                 slice.nextPosition != null -> PageCursor(index, slice.nextPosition)
@@ -138,7 +148,12 @@ class CacheRepository(private val executor: RootCommandExecutor) {
         listFiles(hash, listOf(SourceRegistry.FINDER_VIDEO)).files
 
     /** 扁平源的一页：只对本页这几十个文件执行 stat。 */
-    private suspend fun flatSlice(hash: String, source: CacheSource, offset: Int): Slice {
+    private suspend fun flatSlice(
+        hash: String,
+        source: CacheSource,
+        offset: Int,
+        emojiKey: ByteArray?
+    ): Slice {
         val limit = source.pageSize
         var result = executor.run(
             WxPaths.listSourcePageCommand(hash, source, offset, limit),
@@ -152,7 +167,15 @@ class CacheRepository(private val executor: RootCommandExecutor) {
             )
         }
         val lines = result.stdout.lines().filter { it.isNotBlank() }
-        val files = lines.mapNotNull { parseLine(source, hash, it) }
+        val files = lines.mapNotNull { parseLine(source, hash, it, emojiKey) }
+        if (source.encryptedName != null && files.size < lines.size) {
+            // 加密表情可能成页被跳过（无密钥 / wxgf），留一行日志便于排查「表情变少了」。
+            AppLog.log(
+                "emoji",
+                "page ${source.id}@$offset kept=${files.size}/${lines.size} " +
+                    "hasKey=${emojiKey != null}"
+            )
+        }
 
         if (result.exitCode != 0) {
             AppLog.log(
@@ -171,7 +194,7 @@ class CacheRepository(private val executor: RootCommandExecutor) {
             }
             return Slice(emptyList(), null, message)
         }
-        if (files.isEmpty() && lines.isNotEmpty()) {
+        if (files.isEmpty() && lines.isNotEmpty() && !allEncrypted(source, lines)) {
             AppLog.log(
                 "repo",
                 "flat page parse failed ${source.id}@$offset lines=${lines.size} " +
@@ -235,7 +258,8 @@ class CacheRepository(private val executor: RootCommandExecutor) {
             source.listTimeoutMs
         )
         val lines = result.stdout.lines().filter { it.isNotBlank() }
-        val files = lines.mapNotNull { parseLine(source, hash, it) }
+        // 递归源（聊天图片、朋友圈、语音）没有加密文件，不需要密钥。
+        val files = lines.mapNotNull { parseLine(source, hash, it, null) }
 
         if (result.exitCode != 0) {
             AppLog.log(
@@ -273,8 +297,17 @@ class CacheRepository(private val executor: RootCommandExecutor) {
     /**
      * 一行六个字段：文件名、字节数、mtime、文件头 hex、相对路径、是否有同名 jpg 首帧。
      * 第 5、6 字段缺失时回退到文件名，因此旧的四字段输出仍然可用。
+     *
+     * 表情目录里的裸 32 位 md5 是「只有头部被加密」的文件：拿列目录时已经读到的文件头
+     * 当场解密来判断真实类型。拿不到密钥、或解出来是 wxgf（系统解码器打不开）时返回 null，
+     * 宁可不展示，也不给用户一张点开是乱码的卡片。
      */
-    private fun parseLine(source: CacheSource, hash: String, line: String): CacheFile? {
+    private fun parseLine(
+        source: CacheSource,
+        hash: String,
+        line: String,
+        emojiKey: ByteArray?
+    ): CacheFile? {
         val parts = line.split('\t')
         if (parts.size < 4) return null
         val name = parts[0].trim()
@@ -284,7 +317,14 @@ class CacheRepository(private val executor: RootCommandExecutor) {
         if (name != relativePath.substringAfterLast('/')) return null
         if (!SourceRegistry.isValidRelativePath(source, relativePath)) return null
         val header = parts[3].trim()
-        val type = if (header.isEmpty() || header == "-") {
+        val encrypted = source.encryptedName?.matches(name) == true
+        val type = if (encrypted) {
+            val key = emojiKey ?: return null
+            val plain = EmojiCrypto.decryptHeaderHex(header, key) ?: return null
+            val detected = FileTypeDetector.detect(plain)
+            if (detected == FileType.UNKNOWN || EmojiCrypto.isWxgf(plain)) return null
+            detected
+        } else if (header.isEmpty() || header == "-") {
             source.typeHint(relativePath) ?: FileType.UNKNOWN
         } else {
             FileTypeDetector.detect(header)
@@ -297,8 +337,15 @@ class CacheRepository(private val executor: RootCommandExecutor) {
             type = type,
             relativePath = relativePath,
             sourceId = source.id,
-            hasThumbnail = parts.getOrNull(5)?.trim() == "1"
+            hasThumbnail = parts.getOrNull(5)?.trim() == "1",
+            encrypted = encrypted
         )
+    }
+
+    /** 本页每一行都是加密表情文件名——这类行被整页跳过属于正常，不是格式异常。 */
+    private fun allEncrypted(source: CacheSource, lines: List<String>): Boolean {
+        val shape = source.encryptedName ?: return false
+        return lines.all { shape.matches(it.substringBefore('\t').trim()) }
     }
 
     suspend fun deleteFile(file: CacheFile): Unit = withContext(Dispatchers.IO) {

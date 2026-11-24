@@ -33,6 +33,9 @@ const val RECURSIVE_LIST_TIMEOUT_MS = 30_000L
  * @param allowDelete 是否允许删除；微信运行中还会写回的目录设为 false
  * @param pageSize 每页条数。扁平源按文件名倒序切片，递归源一个一级子目录算一页
  * @param preserveFileName 导出时保留原文件名（聊天文件），否则用「源前缀 + 时间 + 摘要」重命名
+ * @param encryptedName 需要解密的文件名形状（表情目录里裸 32 位 md5 的头部是 AES 密文）
+ * @param skipSiblingSuffix 存在同名的「本名 + 该后缀」文件时跳过本文件；
+ *   表情的裸 md5 与 `<md5>_gif` 解密后内容完全相同，只留一份
  */
 data class CacheSource(
     val id: String,
@@ -53,5 +56,7 @@ data class CacheSource(
     val allowDelete: Boolean = true,
     val pageSize: Int = 60,
     val preserveFileName: Boolean = false,
+    val encryptedName: Regex? = null,
+    val skipSiblingSuffix: String? = null,
     val listTimeoutMs: Long = DEFAULT_LIST_TIMEOUT_MS
 )
