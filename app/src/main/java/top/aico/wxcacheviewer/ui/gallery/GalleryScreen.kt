@@ -20,19 +20,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -75,6 +79,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import coil3.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -145,6 +150,7 @@ fun GalleryScreen(
     onExportSelected: () -> Unit,
     onDeleteSelected: () -> Unit,
     onNoticeShown: () -> Unit,
+    onDismissFinderTip: (Boolean) -> Unit,
     onSaveOne: (CacheFile, (Boolean, String) -> Unit) -> Unit,
     onRetry: () -> Unit,
     onOpenSettings: () -> Unit
@@ -571,6 +577,80 @@ fun GalleryScreen(
                 }
             }
         )
+    }
+
+    if (state.showFinderTip && state.tab == SourceTab.FINDER) {
+        FinderTipDialog(onDismiss = onDismissFinderTip)
+    }
+}
+
+/**
+ * 视频号页的首次说明：缓存要靠微信自己播完整，本应用只读缓存、不下载。
+ *
+ * 不用标准 `AlertDialog`：它把按钮统一右对齐，「不再显示」只能单独占一行，
+ * 正文下方空出一大块。这里自绘容器，底部一行左边复选框、右边确认按钮。
+ *
+ * 勾选「不再显示」并关闭后写入偏好，之后启动或换账号都不再弹出；按钮、返回键、
+ * 点弹窗外部都按当时的勾选状态生效，避免「勾了却没记上、下次又弹」。
+ */
+@Composable
+private fun FinderTipDialog(onDismiss: (Boolean) -> Unit) {
+    var dontShowAgain by remember { mutableStateOf(false) }
+    Dialog(onDismissRequest = { onDismiss(dontShowAgain) }) {
+        Surface(
+            // 与 M3 对话框保持同一套尺寸约束：窄屏 280dp 起，宽屏最多 560dp
+            modifier = Modifier.sizeIn(minWidth = 280.dp, maxWidth = 560.dp),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 6.dp
+        ) {
+            Column(modifier = Modifier.padding(top = 24.dp)) {
+                Text(
+                    text = stringResource(id = R.string.finder_tip_title),
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.padding(horizontal = 24.dp)
+                )
+                // fill = false：内容不满一屏时按内容高度，超出时封顶可滚
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 24.dp, end = 24.dp, top = 16.dp)
+                ) {
+                    Text(
+                        text = stringResource(id = R.string.finder_tip_message),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 8.dp, end = 12.dp, top = 8.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { dontShowAgain = !dontShowAgain }
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = dontShowAgain,
+                            onCheckedChange = { dontShowAgain = it }
+                        )
+                        Text(
+                            text = stringResource(id = R.string.finder_tip_dont_show),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                    TextButton(onClick = { onDismiss(dontShowAgain) }) {
+                        Text(text = stringResource(id = R.string.finder_tip_confirm))
+                    }
+                }
+            }
+        }
     }
 }
 

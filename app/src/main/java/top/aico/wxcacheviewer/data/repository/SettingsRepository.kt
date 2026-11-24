@@ -81,6 +81,17 @@ class SettingsRepository(context: Context) {
     val exportRootDir: File
         get() = File(exportRootPath.ifBlank { defaultExportRootPath() })
 
+    /**
+     * 视频号页的使用说明弹窗是否已被「不再显示」永久关掉。
+     *
+     * 说明内容涉及缓存完整性，与具体账号无关，因此全局只记一次，不按账号区分。
+     */
+    var finderTipDismissed: Boolean
+        get() = preferences.getBoolean(KEY_FINDER_TIP_DISMISSED, false)
+        set(value) {
+            preferences.edit().putBoolean(KEY_FINDER_TIP_DISMISSED, value).apply()
+        }
+
     /** 检查更新时使用的渠道，默认只提示正式版。 */
     var updateChannel: UpdateChannel
         get() = UpdateChannel.entries.firstOrNull {
@@ -106,6 +117,7 @@ class SettingsRepository(context: Context) {
         const val KEY_EXPORT_ROOT_PATH = "export_root_path"
         const val KEY_EXPORT_ROOT_URI = "export_root_uri"
         const val KEY_UPDATE_CHANNEL = "update_channel"
+        const val KEY_FINDER_TIP_DISMISSED = "finder_tip_dismissed"
         const val DEFAULT_EXPORT_DIR_NAME = "WXCacheViewer"
     }
 }

@@ -59,7 +59,9 @@ data class GalleryUiState(
     /** 已选文件的唯一 key（`源:相对路径`），跨目录同名文件不会互相覆盖。 */
     val selectedKeys: Set<String> = emptySet(),
     /** 变化时列表回到顶部；用于排序、切号、刷新等显式操作，删除不触发。 */
-    val resetScrollToken: Int = 0
+    val resetScrollToken: Int = 0,
+    /** 视频号页的使用说明弹窗是否要显示。 */
+    val showFinderTip: Boolean = false
 ) {
     val allSelected: Boolean
         get() = files.isNotEmpty() && selectedKeys.size == files.size
@@ -103,14 +105,24 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
      */
     private var loadGeneration = 0
 
+    /**
+     * 本次进程内是否已经弹过视频号说明。ViewModel 按「账号 + 标签页」缓存，
+     * 切走再回来不会重建，用实例字段兜住，避免每进一次视频号就弹一次。
+     */
+    private var finderTipShown = false
+
     fun load(accountHash: String, tab: SourceTab) {
         val generation = ++loadGeneration
+        // 视频号的缓存完整性说明只在首次进入时提示一次；用户勾过「不再显示」则永久跳过
+        val showTip = tab == SourceTab.FINDER && !finderTipShown && !settings.finderTipDismissed
+        if (tab == SourceTab.FINDER) finderTipShown = true
         viewModelScope.launch {
             repository.invalidate()
             cursor = null
             _uiState.update {
                 it.copy(
                     tab = tab,
+                    showFinderTip = showTip,
                     loading = true,
                     error = null,
                     files = emptyList(),
@@ -413,6 +425,15 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     fun consumeNotice() {
         _uiState.update { it.copy(notice = null) }
+    }
+
+    /**
+     * 关闭视频号说明弹窗。[permanently] 为 true 表示用户勾了「不再显示」，写入偏好后
+     * 之后启动或换账号都不再弹出；否则只是关掉这一次。
+     */
+    fun dismissFinderTip(permanently: Boolean) {
+        if (permanently) settings.finderTipDismissed = true
+        _uiState.update { it.copy(showFinderTip = false) }
     }
 
     /** 每完成一项就刷新进度；若状态已被清理（例如界面重建）则忽略。 */

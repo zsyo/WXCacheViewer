@@ -85,6 +85,7 @@ fun AppRoot(
                     onExportSelected = galleryViewModel::exportSelected,
                     onDeleteSelected = galleryViewModel::deleteSelected,
                     onNoticeShown = galleryViewModel::consumeNotice,
+                    onDismissFinderTip = galleryViewModel::dismissFinderTip,
                     onSaveOne = { file, onResult -> galleryViewModel.exportOne(file, onResult) },
                     onRetry = { galleryViewModel.load(selectedAccountHash, tab) },
                     onOpenSettings = { showSettings = true }

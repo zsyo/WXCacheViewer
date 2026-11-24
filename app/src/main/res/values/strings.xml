@@ -47,6 +47,10 @@
     <string name="voice_decode_failed">解码失败</string>
     <string name="load_more">加载更多</string>
     <string name="loading_more">正在加载…</string>
+    <string name="finder_tip_title">关于视频号缓存</string>
+    <string name="finder_tip_message">视频号的视频不会边播放边保存完整文件。只有在微信里完整播放过一遍，视频缓存才会被完整写入本机；本应用只读取这份缓存，不会替你下载。\n\n没有完整播放过的视频，可能出现：\n· 列表里渲染不出首帧，只显示灰色占位\n· 视频不完整，播放到中途出错或卡住\n· 导出的文件同样不完整，打不开\n\n用法：先在微信里把要看的视频完整看完，再回到这里下拉刷新列表，即可正常预览与导出。已经完整播放过的视频不受影响。</string>
+    <string name="finder_tip_dont_show">不再显示</string>
+    <string name="finder_tip_confirm">我知道了</string>
     <string name="delete_failed">删除失败：%1$s</string>
     <string name="player_preparing">正在准备视频…</string>
     <string name="player_prepare_failed">视频准备失败</string>
