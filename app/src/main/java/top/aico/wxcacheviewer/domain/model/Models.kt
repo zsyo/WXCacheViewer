@@ -3,6 +3,12 @@ package top.aico.wxcacheviewer.domain.model
 enum class FileType {
     MP4, JPEG, PNG, GIF, WEBP,
 
+    /**
+     * 微信私有的 wxgf 容器（H.265 码流 + 自定义头）。
+     * 展示与导出都会先解出首帧转成 PNG，真正的扩展名见 [extension]。
+     */
+    WXGF,
+
     /** 聊天文件（attachment）里收发的文档与安装包等。 */
     ZIP, PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX, TXT, APK, AUDIO,
 
@@ -23,6 +29,7 @@ val FileType.mime: String
         FileType.PNG -> "image/png"
         FileType.GIF -> "image/gif"
         FileType.WEBP -> "image/webp"
+        FileType.WXGF -> "image/png"
         FileType.ZIP -> "application/zip"
         FileType.PDF -> "application/pdf"
         FileType.DOC -> "application/msword"
@@ -50,6 +57,8 @@ val FileType.extension: String
         FileType.PNG -> "png"
         FileType.GIF -> "gif"
         FileType.WEBP -> "webp"
+        // wxgf 落盘与导出的都是解出来的首帧 PNG
+        FileType.WXGF -> "png"
         FileType.ZIP -> "zip"
         FileType.PDF -> "pdf"
         FileType.DOC -> "doc"
@@ -66,10 +75,10 @@ val FileType.extension: String
         FileType.UNKNOWN -> "bin"
     }
 
-/** 能交给图片预览页的类型。 */
+/** 能交给图片预览页的类型。wxgf 会先解出首帧，所以也算图片。 */
 val FileType.isImage: Boolean
     get() = this == FileType.JPEG || this == FileType.PNG ||
-        this == FileType.GIF || this == FileType.WEBP
+        this == FileType.GIF || this == FileType.WEBP || this == FileType.WXGF
 
 /** 语音类缓存，列表里走内联播放而不是预览或「打开方式」。 */
 val FileType.isVoice: Boolean

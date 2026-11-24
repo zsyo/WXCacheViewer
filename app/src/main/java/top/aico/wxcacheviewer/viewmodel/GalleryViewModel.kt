@@ -21,6 +21,7 @@ import top.aico.wxcacheviewer.data.root.RootCommandExecutor
 import top.aico.wxcacheviewer.domain.CacheFileSorter
 import top.aico.wxcacheviewer.domain.ExportCategory
 import top.aico.wxcacheviewer.domain.model.CacheFile
+import top.aico.wxcacheviewer.domain.model.FileType
 import top.aico.wxcacheviewer.domain.model.SortOption
 import top.aico.wxcacheviewer.domain.model.mime
 import top.aico.wxcacheviewer.domain.source.ExportKind
@@ -430,11 +431,11 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
     private data class ExportTarget(val directory: File, val label: String)
 
-    /** 语音要先转码、加密表情要先解密，其余缓存源直接 root 复制。 */
+    /** 语音要先转码、表情要先解密（wxgf 还要解出首帧），其余缓存源直接 root 复制。 */
     private suspend fun exportSingle(file: CacheFile, directory: File): File = when {
         SourceRegistry.byId(file.sourceId).exportKind == ExportKind.MUSIC ->
             voicePreparer.export(file, directory)
-        file.encrypted -> emojiPreparer.export(file, directory)
+        file.encrypted || file.type == FileType.WXGF -> emojiPreparer.export(file, directory)
         else -> repository.exportFile(file, directory)
     }
 

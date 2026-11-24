@@ -2,17 +2,19 @@ package top.aico.wxcacheviewer.data.media
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import top.aico.wxcacheviewer.data.emoji.EmojiContent
 import top.aico.wxcacheviewer.data.log.AppLog
 import top.aico.wxcacheviewer.data.root.RootCommandExecutor
 import top.aico.wxcacheviewer.data.root.WxPaths
-import top.aico.wxcacheviewer.domain.emoji.EmojiCrypto
 import top.aico.wxcacheviewer.domain.emoji.EmojiKeyProvider
 import top.aico.wxcacheviewer.domain.model.CacheFile
+import top.aico.wxcacheviewer.domain.model.FileType
 import top.aico.wxcacheviewer.domain.model.extension
 import top.aico.wxcacheviewer.domain.source.SourceRegistry
 import java.io.File
@@ -25,8 +27,8 @@ import java.util.concurrent.ConcurrentHashMap
  * root 复制是挂起调用，无法在 Coil 的同步 Fetcher 里完成，因此拆成「先复制、再加载」两步。
  * 目标文件名带文件大小，内容变化后 key 自然失效；并发限制在 [MAX_CONCURRENT] 个 su 进程。
  *
- * 表情目录里的裸 md5 文件只有前 1KB 被加密，复制完成后就地把头部解开，
- * 之后 Coil 拿到的是能被系统解码的 GIF/PNG/JPEG。
+ * 表情目录里的裸 md5 文件只有前 1KB 被加密，复制完成后解开头部就得到可解码的
+ * GIF/PNG/JPEG；解出来是 wxgf 的还要再解出首帧、转成 PNG 才能给 Coil。
  */
 class MediaPreparer(
     context: Context,
@@ -41,23 +43,29 @@ class MediaPreparer(
         val mutex = locks.getOrPut(file.key) { Mutex() }
         mutex.withLock {
             val target = targetFile(file)
-            if (target.isFile && target.length() == file.size) {
+            // 加密表情与 wxgf 的产物长度跟原件对不上（wxgf 会转成 PNG），只能看文件在不在。
+            val fresh = if (file.encrypted || file.type == FileType.WXGF) {
+                target.isFile
+            } else {
+                target.isFile && target.length() == file.size
+            }
+            if (fresh) {
                 target.setLastModified(System.currentTimeMillis())
                 return@withLock target
             }
             semaphore.withPermit {
-                target.delete()
-                val ready = if (file.encrypted) {
-                    decryptFromRoot(file, target)
-                } else {
-                    copyFromRoot(file, target)
-                }
-                if (ready) {
-                    prune()
-                    target
-                } else {
+                // 复制/解密一旦开始就做完：列表滚动时卡片会离开组合、协程被取消，
+                // 半途而废等于每滚一次都白做，回来还是占位。
+                withContext(NonCancellable) {
                     target.delete()
-                    null
+                    val ready = materialize(file, target)
+                    if (ready) {
+                        prune()
+                        target
+                    } else {
+                        target.delete()
+                        null
+                    }
                 }
             }
         }
@@ -93,34 +101,39 @@ class MediaPreparer(
     }
 
     /**
-     * 加密表情：先 root 复制一份只读原件，再由应用读出、解开前 1KB、写成自己的文件。
+     * 先 root 复制一份只读原件，再由应用读出、解开头部（必要时再解出 wxgf 首帧），
+     * 最后写成自己的文件。
      *
      * 不在原件上就地改写，是因为 root 复制出来的文件属主是 root，0644 没写权限；
      * 放宽成 0666 也可能被 SELinux 标签挡住。让应用自己创建产物最稳。
      */
-    private suspend fun decryptFromRoot(file: CacheFile, target: File): Boolean {
+    private suspend fun materialize(file: CacheFile, target: File): Boolean {
         val raw = File(target.parentFile, target.name + RAW_SUFFIX)
         raw.delete()
         if (!copyFromRoot(file, raw)) {
             raw.delete()
             return false
         }
-        val key = emojiKeys.keyFor(file.accountHash)
-        if (key == null) {
-            AppLog.log("media", "decrypt key missing ${file.relativePath}")
-            raw.delete()
-            return false
-        }
         val ok = try {
-            val bytes = raw.readBytes()
-            val headBytes = minOf(bytes.size, EmojiCrypto.HEAD_BYTES) / BLOCK_BYTES * BLOCK_BYTES
-            val plainHead = EmojiCrypto.decrypt(bytes.copyOfRange(0, headBytes), key)
-                ?: error("bad key")
-            target.outputStream().use { out ->
-                out.write(plainHead)
-                out.write(bytes, headBytes, bytes.size - headBytes)
+            val key = if (file.encrypted) emojiKeys.keyFor(file.accountHash) else null
+            if (file.encrypted && key == null) {
+                AppLog.log("media", "decrypt key missing ${file.relativePath}")
+                false
+            } else {
+                val content = EmojiContent.materialize(
+                    raw.readBytes(),
+                    key,
+                    file.encrypted,
+                    target.parentFile ?: raw.parentFile ?: rootDir
+                )
+                if (content == null) {
+                    AppLog.log("media", "emoji content failed ${file.relativePath}")
+                    false
+                } else {
+                    target.writeBytes(content.bytes)
+                    true
+                }
             }
-            true
         } catch (e: Exception) {
             AppLog.log("media", "decrypt failed ${file.relativePath}: ${e.message}")
             false
@@ -134,6 +147,8 @@ class MediaPreparer(
      * 否则打开时系统按扩展名找应用会找不到（docx/xlsx 这类尤其明显）。
      */
     private fun extensionOf(file: CacheFile): String {
+        // wxgf 落盘的已经是解出来的 PNG，不能再按源类型补成 wxgf。
+        if (file.type == FileType.WXGF) return EmojiContent.PNG_EXTENSION
         val dot = file.name.lastIndexOf('.')
         if (dot in 1 until file.name.lastIndex) {
             val candidate = file.name.substring(dot + 1).lowercase()
@@ -168,6 +183,5 @@ class MediaPreparer(
 
         /** 加密表情的原件临时后缀，解密完成后删除。 */
         const val RAW_SUFFIX = ".raw"
-        const val BLOCK_BYTES = 16
     }
 }

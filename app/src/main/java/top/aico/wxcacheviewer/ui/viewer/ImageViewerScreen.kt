@@ -164,9 +164,11 @@ private fun ViewerPage(file: CacheFile, preparer: MediaPreparer) {
             preparer.prepare(file)
         } catch (e: Exception) {
             AppLog.log("viewer", "prepare failed ${file.key}: ${e.message}")
-            prepareFailed = true
             null
         }
+        // prepare 解不出来时返回 null 而不是抛异常（比如 wxgf 解码失败、密钥缺失），
+        // 这时同样要落到失败提示，否则界面会一直转圈
+        prepareFailed = value == null
     }
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

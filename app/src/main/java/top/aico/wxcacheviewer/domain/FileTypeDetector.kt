@@ -39,6 +39,12 @@ object FileTypeDetector {
         if (bytes.size >= 3 && at(0) == 0xFF && at(1) == 0xD8 && at(2) == 0xFF) {
             return FileType.JPEG
         }
+        // 微信私有的 wxgf：表情目录里解出来的一类，外面是 H.265 码流
+        if (bytes.size >= 4 &&
+            at(0) == 0x77 && at(1) == 0x78 && at(2) == 0x67 && at(3) == 0x66
+        ) {
+            return FileType.WXGF
+        }
         if (bytes.size >= 8 &&
             at(0) == 0x89 && at(1) == 0x50 && at(2) == 0x4E && at(3) == 0x47 &&
             at(4) == 0x0D && at(5) == 0x0A && at(6) == 0x1A && at(7) == 0x0A

@@ -64,6 +64,24 @@ class EmojiCryptoTest {
     }
 
     @Test
+    fun decryptContentKeepsTailPlain() {
+        val key = EmojiCrypto.keyOf(uin)!!
+        // 只有前 1024 字节是密文，后面原样保留；整份内容必须能还原
+        val plain = ByteArray(3000) { (it % 251).toByte() }
+        val cipher = encrypt(plain.copyOfRange(0, 1024), key) + plain.copyOfRange(1024, plain.size)
+
+        assertArrayEquals(plain, EmojiCrypto.decryptContent(cipher, key))
+    }
+
+    @Test
+    fun decryptContentHandlesFileShorterThanHead() {
+        val key = EmojiCrypto.keyOf(uin)!!
+        val plain = ByteArray(64) { (it * 3).toByte() }
+
+        assertArrayEquals(plain, EmojiCrypto.decryptContent(encrypt(plain, key), key))
+    }
+
+    @Test
     fun recognizesWxgfMagic() {
         val plain = "wxgf".toByteArray() + ByteArray(28)
         assertTrue(EmojiCrypto.isWxgf(plain))

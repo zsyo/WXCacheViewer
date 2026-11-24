@@ -299,8 +299,8 @@ class CacheRepository(
      * 第 5、6 字段缺失时回退到文件名，因此旧的四字段输出仍然可用。
      *
      * 表情目录里的裸 32 位 md5 是「只有头部被加密」的文件：拿列目录时已经读到的文件头
-     * 当场解密来判断真实类型。拿不到密钥、或解出来是 wxgf（系统解码器打不开）时返回 null，
-     * 宁可不展示，也不给用户一张点开是乱码的卡片。
+     * 当场解密来判断真实类型。拿不到密钥或解不出类型时返回 null，宁可不展示，
+     * 也不给用户一张点开是乱码的卡片；wxgf 能自己解出首帧，所以照常列出来。
      */
     private fun parseLine(
         source: CacheSource,
@@ -321,9 +321,7 @@ class CacheRepository(
         val type = if (encrypted) {
             val key = emojiKey ?: return null
             val plain = EmojiCrypto.decryptHeaderHex(header, key) ?: return null
-            val detected = FileTypeDetector.detect(plain)
-            if (detected == FileType.UNKNOWN || EmojiCrypto.isWxgf(plain)) return null
-            detected
+            FileTypeDetector.detect(plain).takeIf { it != FileType.UNKNOWN } ?: return null
         } else if (header.isEmpty() || header == "-") {
             source.typeHint(relativePath) ?: FileType.UNKNOWN
         } else {

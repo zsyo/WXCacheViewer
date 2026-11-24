@@ -7,11 +7,12 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * 微信表情缓存（`MicroMsg/<hash>/emoji/<32 位 md5>`）的解密。
  *
- * 实测结论（Android 微信 8.x，真机校验过 GIF / PNG 两种样本）：
+ * 实测结论（Android 微信 8.x，真机校验过 GIF / PNG / wxgf 三类样本）：
  * 1. 只有**前 1024 字节**被 AES-128-ECB 加密，其余部分是明文，因此长度不变；
  * 2. 密钥由 uin 推导：`md5(十进制 uin)` 的十六进制前 16 个字符，直接当作 16 字节 ASCII 密钥。
  *    这一点与网上流传的「md5(imei)」不同，实测 md5(uin) 才能解出来；
- * 3. 解密后整份内容的 md5 正好等于文件名，可用来校验密钥是否正确。
+ * 3. 解密后整份内容的 md5 等于文件名——这条对 GIF / PNG 成立，可用来校验密钥；
+ *    wxgf 样本的 md5 对不上，但头部能解出合法容器与合法 H.265 参数集，另有校验手段。
  *
  * 加密只覆盖头部，所以预览/导出都只需要改写前 1024 字节，不必整文件重写。
  */
@@ -30,9 +31,6 @@ object EmojiCrypto {
 
     private const val KEY_ALGORITHM = "AES"
     private const val TRANSFORMATION = "AES/ECB/NoPadding"
-
-    /** 微信私有的 wxgf 动图头，解出来也无法用系统解码器打开。 */
-    private val WXGF_MAGIC = byteArrayOf(0x77, 0x78, 0x67, 0x66)
 
     /**
      * 由 uin 推导表情密钥。uin 必须是纯数字；拿不到合法 uin 时返回 null，
@@ -64,6 +62,21 @@ object EmojiCrypto {
     }
 
     /**
+     * 解密整份内容：前 1024 字节解密、其余原样拼接。
+     *
+     * 解出来的可能是 GIF/PNG/JPEG，也可能是 [WxgfFormat] 的私有容器。
+     */
+    fun decryptContent(cipherBytes: ByteArray, key: ByteArray): ByteArray? {
+        val headBytes = minOf(cipherBytes.size, HEAD_BYTES) / BLOCK_BYTES * BLOCK_BYTES
+        val plainHead = decrypt(cipherBytes.copyOfRange(0, headBytes), key) ?: return null
+        if (headBytes == cipherBytes.size) return plainHead
+        val out = ByteArray(plainHead.size + cipherBytes.size - headBytes)
+        plainHead.copyInto(out, 0)
+        cipherBytes.copyInto(out, plainHead.size, headBytes, cipherBytes.size)
+        return out
+    }
+
+    /**
      * 解密列表命令拿到的文件头（十六进制）。
      *
      * 列目录时 shell 已经读了前 32 字节，ECB 按分组独立解密，
@@ -81,10 +94,8 @@ object EmojiCrypto {
         return decrypt(bytes, key)
     }
 
-    /** 解密出来的内容是不是微信私有 wxgf（HEVC 封装，系统解码器打不开）。 */
-    fun isWxgf(bytes: ByteArray): Boolean =
-        bytes.size >= WXGF_MAGIC.size &&
-            WXGF_MAGIC.indices.all { bytes[it] == WXGF_MAGIC[it] }
+    /** 解密出来的内容是不是微信私有 wxgf（HEVC 封装，需要自己解码）。 */
+    fun isWxgf(bytes: ByteArray): Boolean = WxgfFormat.isWxgf(bytes)
 
     private const val MAX_UIN_LENGTH = 20
 }

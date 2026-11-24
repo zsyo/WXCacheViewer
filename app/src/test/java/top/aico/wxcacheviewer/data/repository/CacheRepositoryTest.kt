@@ -301,6 +301,24 @@ class CacheRepositoryTest {
     }
 
     @Test
+    fun encryptedWxgfEmojiIsListedForSelfDecoding() = runBlocking {
+        val key = EmojiCrypto.keyOf("1000000001")!!
+        val md5 = "9213f8de4b8e6b5534fd84c15ddc358d"
+        // wxgf 是微信私有容器，但本应用能自己解出首帧，所以不能像以前那样整行丢掉
+        val plain = "wxgf".toByteArray() + ByteArray(28) { it.toByte() }
+        val executor = FakeExecutor(
+            ShellResult(encryptedEmojiLine(md5, encryptedHeaderHex(plain, key)), 0, "")
+        )
+        val repo = CacheRepository(executor, EmojiKeyProvider { key })
+
+        val page = repo.loadPage(hash, listOf(SourceRegistry.EMOJI), null)
+
+        assertEquals(1, page.files.size)
+        assertEquals(FileType.WXGF, page.files[0].type)
+        assertTrue(page.files[0].encrypted)
+    }
+
+    @Test
     fun fallsBackToDirNamesWhenStatLacksNamePlaceholder() = runBlocking {
         val executor = RoutingExecutor { command ->
             when {
