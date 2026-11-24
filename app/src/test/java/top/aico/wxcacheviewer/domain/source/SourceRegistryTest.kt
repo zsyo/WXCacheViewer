@@ -17,8 +17,10 @@ class SourceRegistryTest {
         assertTrue(SourceRegistry.isValidRelativePath(emoji, "${md5}_thumb"))
         // 裸 md5 的头部是密文，解密后再判断真实类型
         assertTrue(SourceRegistry.isValidRelativePath(emoji, md5))
-        assertTrue(emoji.encryptedName!!.matches(md5))
-        assertFalse(emoji.encryptedName!!.matches("${md5}_gif"))
+        // 提成局部变量：连着两次 !! 会被编译器判为多余断言（第一次已智能转换）
+        val encryptedName = requireNotNull(emoji.encryptedName) { "表情源缺少加密文件名规则" }
+        assertTrue(encryptedName.matches(md5))
+        assertFalse(encryptedName.matches("${md5}_gif"))
         // 与 _gif 内容相同的裸文件由 shell 跳过，避免同一张表情出现两遍
         assertEquals("_gif", emoji.skipSiblingSuffix)
         assertFalse(SourceRegistry.isValidRelativePath(emoji, "${md5}_gif/../x"))
