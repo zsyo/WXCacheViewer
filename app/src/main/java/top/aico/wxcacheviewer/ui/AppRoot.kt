@@ -11,7 +11,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
+import top.aico.wxcacheviewer.data.root.RootState
 import top.aico.wxcacheviewer.domain.source.SourceTab
 import top.aico.wxcacheviewer.ui.account.AccountSelectScreen
 import top.aico.wxcacheviewer.ui.gallery.GalleryScreen
@@ -35,8 +38,15 @@ fun AppRoot(
         accountViewModel.refresh()
     }
 
+    // 用户可能刚在 root 管理器里撤销授权：回到前台复检一次，检测到就退回引导页。
+    // 不检测的话相册会停在原地，之后每个操作都只是一句失败提示，用户不知道去哪补救。
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        accountViewModel.verifyRoot()
+    }
+
     Surface(modifier = Modifier.fillMaxSize()) {
-        if (selectedAccountHash.isEmpty()) {
+        // 授权被撤销时即使选过账号也退回引导页；重新授权后 refresh 会让界面回到相册
+        if (selectedAccountHash.isEmpty() || accountState.rootState is RootState.Unavailable) {
             AccountSelectScreen(
                 state = accountState,
                 onSelect = {

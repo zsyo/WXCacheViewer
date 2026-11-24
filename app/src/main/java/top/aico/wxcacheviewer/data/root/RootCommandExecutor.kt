@@ -60,6 +60,21 @@ open class RootCommandExecutor {
     }
 
     suspend fun checkRoot(): RootState {
+        // 用户点「重新检测」通常就是刚从 root 管理器授权回来，命名空间必须重探：
+        // 上次没权限时探到的 DIRECT 是「探不出来」，不是「这台设备只能用 DIRECT」。
+        invalidateMode()
+        return probeRoot()
+    }
+
+    /**
+     * 轻量复检：沿用已确定的执行方式问一次 su 还给不给用，不重探命名空间。
+     *
+     * 用于回到前台时发现「授权被撤销」——设备与命名空间都没变，重探只是白跑几次 su。
+     * 还没探过（首次调用）时 [currentMode] 仍会走完整探测。
+     */
+    suspend fun verifyRoot(): RootState = probeRoot()
+
+    private suspend fun probeRoot(): RootState {
         val result = run("id -u")
         if (result.exitCode == -127) return RootState.Unavailable(RootState.Reason.NO_SU)
         if (result.timedOut) return RootState.Unavailable(RootState.Reason.TIMEOUT)
@@ -71,18 +86,45 @@ open class RootCommandExecutor {
         }
     }
 
+    /** 丢掉探测结果，下次执行重新探测。授权状态变化后必须调用。 */
+    fun invalidateMode() {
+        mode = null
+    }
+
     suspend fun currentMode(): NamespaceMode {
         mode?.let { return it }
         return modeLock.withLock {
-            mode ?: resolveMode().also { mode = it }
+            mode ?: resolveMode()?.also { mode = it } ?: NamespaceMode.DIRECT
         }
     }
 
-    private suspend fun resolveMode(): NamespaceMode {
+    /**
+     * 探测该用哪种方式执行 su。
+     *
+     * 返回 null 表示**这次探测没有结论**：su 不存在、授权被拒绝、等待授权超时。
+     * 这种结果绝不能缓存——用户去 root 管理器点一下允许再回来，同一个进程里重探就能
+     * 拿到完整命名空间；缓存下来会一直走裁剪过的视图，表现为「重试后提示未发现账号，
+     * 必须杀掉应用重开才正常」。
+     */
+    private suspend fun resolveMode(): NamespaceMode? {
         val direct = execute(listOf("su", "-c", PROBE_COMMAND), PROBE_TIMEOUT_MS)
         if (direct.exitCode == -127) {
-            AppLog.log("root", "su not found, keep DIRECT")
-            return NamespaceMode.DIRECT
+            AppLog.log("root", "su not found, mode unresolved")
+            return null
+        }
+        if (direct.timedOut) {
+            AppLog.log("root", "su probe timed out, mode unresolved")
+            return null
+        }
+        if (!direct.stdout.contains(PROBE_MARK)) {
+            // su 跑了却没给探针输出：授权被拒时 exit≠0，再试 -mm 和 nsenter 同样是
+            // 白等一轮授权/超时，没有信息量。exit=0 时按设备只能 DIRECT 处理。
+            AppLog.log(
+                "root",
+                "su probe failed: exit=${direct.exitCode} " +
+                    direct.stderr.take(120).replace("\n", " ")
+            )
+            return if (direct.exitCode == 0) NamespaceMode.DIRECT else null
         }
         if (isNamespaceComplete(direct.stdout)) {
             AppLog.log("root", "mode=DIRECT ${direct.stdout.trim()}")
@@ -128,8 +170,10 @@ open class RootCommandExecutor {
      * 命令超时会被 `destroy()` 掉，管道随即关闭，正在阻塞的读取必然抛
      * “read interrupted by close() on another thread”。旧实现把这个异常漏给了调用方，
      * 于是界面显示一条看不懂的 Java 消息；现在读取异常只记日志，超时则带上已读到的部分输出。
+     *
+     * 单测覆写它来模拟不同授权状态，不需要真 su。
      */
-    private suspend fun execute(argv: List<String>, timeoutMs: Long): ShellResult =
+    protected open suspend fun execute(argv: List<String>, timeoutMs: Long): ShellResult =
         withContext(Dispatchers.IO) {
             AppLog.log("shell", "run[${argv.joinToString(" ").take(120)}]: last=${argv.last().take(300).replace("\n", " ⏎ ")}")
             val process = try {
@@ -220,6 +264,9 @@ open class RootCommandExecutor {
         /** 关闭管道后等待读取线程收尾的时间，超时就不再等，避免卡住调用方。 */
         private const val READER_DRAIN_TIMEOUT_MS = 1_000L
         private const val TIMEOUT_MESSAGE = "命令超时"
+
+        /** 探针成功时的输出标记；没有它就说明 su 根本没执行命令。 */
+        private const val PROBE_MARK = "visible="
 
         private const val PROBE_COMMAND =
             "echo visible=\$(ls -1 /data/user/0 2>/dev/null | wc -l) " +

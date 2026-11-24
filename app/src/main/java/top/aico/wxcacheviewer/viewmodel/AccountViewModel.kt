@@ -40,6 +40,39 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
     /** 防重入：首次进入与「重试」点击可能并发，旧响应会覆盖刚保存的备注和账号状态。 */
     private var refreshJob: Job? = null
 
+    private var verifyJob: Job? = null
+
+    /**
+     * 回到前台时复检 root 权限。
+     *
+     * 用户可能是去 root 管理器撤销授权的：不检测的话应用仍停在相册里，之后任何操作都只是
+     * 一句「读取失败」或空列表，看不到「去重新授权」的引导。检测到就切回引导页；
+     * 如果权限又恢复了（用户重新允许），顺手重新拉账号，界面自己回到列表。
+     */
+    fun verifyRoot() {
+        // 首屏加载或用户点了「重新检测」正在跑，已有结论，别并发覆盖
+        if (refreshJob?.isActive == true || verifyJob?.isActive == true) return
+        verifyJob = viewModelScope.launch {
+            val root = try {
+                executor.verifyRoot()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLog.log("account", "root verify failed: ${e.message}")
+                return@launch
+            }
+            if (root is RootState.Unavailable) {
+                AppLog.log("account", "root revoked: ${root.reason}")
+                _uiState.update {
+                    it.copy(rootState = root, accounts = emptyList(), error = null, diagnostics = null)
+                }
+            } else if (_uiState.value.rootState is RootState.Unavailable) {
+                AppLog.log("account", "root restored, reload")
+                refresh()
+            }
+        }
+    }
+
     fun refresh() {
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
