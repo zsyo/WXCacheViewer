@@ -9,6 +9,7 @@ import top.aico.wxcacheviewer.data.root.WxPaths
 import top.aico.wxcacheviewer.domain.ExportNaming
 import top.aico.wxcacheviewer.domain.emoji.EmojiKeyProvider
 import top.aico.wxcacheviewer.domain.model.CacheFile
+import top.aico.wxcacheviewer.domain.model.FileType
 import top.aico.wxcacheviewer.domain.model.extension
 import top.aico.wxcacheviewer.domain.source.SourceRegistry
 import java.io.File
@@ -19,8 +20,8 @@ import java.util.Locale
  * 表情的导出。
  *
  * 导出的必须是能直接打开的成品，不能把微信目录里的原始字节复制出去，因此流程是：
- * root 复制到应用私有目录 → 解开前 1KB（wxgf 再解出首帧）→ 借 root 落到用户选的导出目录，
- * 文件名按最终内容补扩展名（GIF/PNG/JPEG）。
+ * root 复制到应用私有目录 → 解开前 1KB → 借 root 落到用户选的导出目录。
+ * 文件名按最终内容补扩展名：普通表情是 GIF/PNG/JPEG，wxgf 则重编码成动图 GIF。
  */
 class EmojiPreparer(
     context: Context,
@@ -82,10 +83,19 @@ class EmojiPreparer(
         val target = try {
             val key = if (file.encrypted) emojiKeys.keyFor(file.accountHash) else null
             if (file.encrypted && key == null) throw IllegalStateException("表情解密失败")
-            val content = EmojiContent.materialize(raw.readBytes(), key, file.encrypted, tempDir)
-                ?: throw IllegalStateException("表情解密失败")
-            val extension = content.extension ?: file.type.extension
-            File(tempDir, "${cacheId(file)}.$extension").also { it.writeBytes(content.bytes) }
+            if (file.type == FileType.WXGF) {
+                // 微信里这些表情是动图，导出成静帧等于丢内容，这里重编码成 GIF
+                val gif = File(tempDir, "${cacheId(file)}.${FileType.WXGF.extension}")
+                if (!EmojiContent.materializeAnimated(raw.readBytes(), key, file.encrypted, gif)) {
+                    throw IllegalStateException("表情动图转换失败")
+                }
+                gif
+            } else {
+                val content = EmojiContent.materialize(raw.readBytes(), key, file.encrypted, tempDir)
+                    ?: throw IllegalStateException("表情解密失败")
+                val extension = content.extension ?: file.type.extension
+                File(tempDir, "${cacheId(file)}.$extension").also { it.writeBytes(content.bytes) }
+            }
         } catch (e: Exception) {
             AppLog.log("emoji", "decrypt failed ${file.relativePath}: ${e.message}")
             throw IllegalStateException("表情解密失败", e)
@@ -96,19 +106,20 @@ class EmojiPreparer(
         return target
     }
 
-    /** 产物扩展名跟源类型不完全一致（wxgf → png），所以按前缀找已有的那份。 */
+    /** 产物扩展名跟源类型不完全一致（wxgf → gif），按「id + 期望扩展名」精确找已有的那份。 */
     private fun findCached(file: CacheFile): File? {
-        val prefix = cacheId(file)
-        return tempDir.listFiles()?.firstOrNull {
-            it.isFile && it.name.startsWith("$prefix.") && !it.name.endsWith(RAW_SUFFIX)
-        }
+        val name = "${cacheId(file)}.${file.type.extension}"
+        return tempDir.listFiles()?.firstOrNull { it.isFile && it.name == name }
     }
 
-    private fun cacheId(file: CacheFile): String =
-        MessageDigest.getInstance("SHA-1")
-            .digest("${file.key}#${file.size}".toByteArray(Charsets.UTF_8))
+    /** wxgf 的产物名带上编码版本，帧率/格式调整后旧 GIF 自动失效。 */
+    private fun cacheId(file: CacheFile): String {
+        val tag = if (file.type == FileType.WXGF) "#${EmojiContent.CACHE_TAG}" else ""
+        return MessageDigest.getInstance("SHA-1")
+            .digest("${file.key}#${file.size}$tag".toByteArray(Charsets.UTF_8))
             .joinToString("") { String.format(Locale.US, "%02x", it) }
             .take(16)
+    }
 
     /** 只保留最近使用的若干个中间文件，避免私有目录无限增长。 */
     private fun prune() {

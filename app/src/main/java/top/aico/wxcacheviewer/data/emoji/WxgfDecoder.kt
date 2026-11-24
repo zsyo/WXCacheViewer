@@ -13,22 +13,19 @@ import java.io.File
 import java.nio.ByteBuffer
 
 /**
- * 把 wxgf 里的 H.265 码流变成能看的图。
+ * 把 wxgf 里的 H.265 码流变成能看的图或能播的动图。
  *
- * 两条路，先试快的：
+ * 两条出口，都按访问单元（AU）喂数据：
+ * - [decodeFirstFrame]：解首帧给网格当缩略图；
+ * - [decodeFrames]：解全部画面，预览页播放与导出 GIF 都用它。
  *
- * 1. 直接把访问单元（AU）喂给 MediaCodec，从输出的 [Image] 上自己转 YUV→ARGB。
- *    不落盘、不过封装器，路径最短。
- * 2. 万一机型的 HEVC 解码器不支持 ByteBuffer 输出，退一步把 AU 封装成 MP4
- *    （容器里本来就是标准 HEVC，不需要转码），再让 [MediaMetadataRetriever] 取首帧。
- *
- * 两条路都按 AU 喂数据：wxgf 的一个分区常常装了不止一帧，整段当一帧交上去，
- * 解码器会当非法数据丢掉，真机上的表现就是首帧怎么都取不到。
+ * 为什么一定要按 AU 切：wxgf 的一个分区常常装了不止一帧，整段当一帧交上去属于非法数据，
+ * 解码器直接丢弃，真机上的表现就是「封装成功、元数据尺寸也对，就是取不到画面」。
  *
  * 曾经用过「[android.media.ImageReader] 接解码器 Surface」的方案，方向是错的：
  * wxgf 头里写的宽高并不等于码流真实尺寸，ImageReader 按错尺寸创建后
  * `getPlanes()` 会在 JNI 里直接 abort（`non-zero capacity for nullptr pointer`），
- * 应用闪退、Kotlin 侧拦不住。
+ * 应用闪退、Kotlin 侧拦不住。现在改成不接 Surface、自己从 `getOutputImage()` 转 ARGB。
  */
 object WxgfDecoder {
 
@@ -36,14 +33,20 @@ object WxgfDecoder {
 
     private const val CSD_KEY = "csd-0"
 
-    /** 容器里没写帧率，取一个常见值；只影响动图节奏与时间戳，不影响首帧。 */
-    private const val FRAME_INTERVAL_US = 33_000L
+    /** 容器里没写帧率，取一个常见值；只影响动图节奏与时间戳。 */
+    const val FRAME_INTERVAL_US = 33_000L
 
     /** 单次出队等待：够一次解码，又不至于卡住主流程。 */
     private const val DEQUEUE_TIMEOUT_US = 5_000L
 
-    /** 一次尝试总时长上限，超时按失败处理，别让卡片一直转圈。 */
+    /** 取首帧的尝试时长上限，超时按失败处理，别让卡片一直转圈。 */
     private const val ATTEMPT_TIMEOUT_MS = 900L
+
+    /** 解全部帧要宽松些：几十帧逐帧解码，太短会截断。 */
+    private const val FRAMES_TIMEOUT_MS = 8_000L
+
+    /** 帧数保护：正常表情几十帧，超过这个数说明码流不对劲。 */
+    private const val MAX_FRAMES = 300
 
     /** 解码器输入缓冲开大一点，省得大帧被截断。 */
     private const val MAX_INPUT_BYTES = 1 shl 20
@@ -58,8 +61,11 @@ object WxgfDecoder {
      */
     private val decodeLock = Any()
 
+    /** 一帧画面：ARGB 像素，按行紧排。 */
+    class Frame(val width: Int, val height: Int, val argb: IntArray)
+
     /**
-     * 解出首帧。封装用的中间 MP4 写在 [workDir]，用完即删（只在兜底路径上产生）。
+     * 解出首帧。封装兜底用的中间 MP4 写在 [workDir]，用完即删。
      *
      * 失败（码流异常、机型不支持 HEVC、磁盘写不了）返回 null，卡片显示占位。
      */
@@ -72,76 +78,140 @@ object WxgfDecoder {
             }
         }
 
+    /** 解出全部画面（导出 GIF 用）。一帧都解不出来时返回空列表。 */
+    fun decodeFrames(container: WxgfFormat.Container): List<Frame> = synchronized(decodeLock) {
+        var codec: MediaCodec? = null
+        val frames = ArrayList<Frame>()
+        try {
+            codec = open(container)
+            pump(codec, container, FRAMES_TIMEOUT_MS) { image ->
+                val frame = toFrame(image)
+                if (frame != null && (frames.isEmpty() || sameSize(frames.first(), frame))) {
+                    frames += frame
+                }
+                frames.size >= MAX_FRAMES
+            }
+        } catch (e: Exception) {
+            AppLog.log("emoji", "wxgf frames failed: ${e.message}")
+        } finally {
+            release(codec)
+        }
+        AppLog.log(
+            "emoji",
+            "wxgf frames=${frames.size} units=${container.units.size}"
+        )
+        frames
+    }
+
+    private fun sameSize(left: Frame, right: Frame): Boolean =
+        left.width == right.width && left.height == right.height
+
     private fun attempt(container: WxgfFormat.Container, workDir: File): Bitmap? =
         fromBytes(container) ?: muxAndRetrieve(container, workDir)
 
     /** 主路径：MediaCodec 直接解码，取第一张能拿到画面的输出。 */
     private fun fromBytes(container: WxgfFormat.Container): Bitmap? {
         var codec: MediaCodec? = null
+        var bitmap: Bitmap? = null
         return try {
-            codec = MediaCodec.createDecoderByType(MIME)
-            val format = MediaFormat.createVideoFormat(MIME, container.width, container.height).apply {
-                setByteBuffer(CSD_KEY, ByteBuffer.wrap(container.parameterSets))
-                setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_INPUT_BYTES)
+            codec = open(container)
+            pump(codec, container, ATTEMPT_TIMEOUT_MS) { image ->
+                bitmap = toBitmap(image)
+                bitmap != null
             }
-            codec.configure(format, null, null, 0)
-            codec.start()
-            drain(codec, container)
+            bitmap
         } catch (e: Exception) {
             AppLog.log("emoji", "wxgf codec failed: ${e.message}")
             null
         } finally {
-            runCatching { codec?.stop() }
-            runCatching { codec?.release() }
+            release(codec)
         }
     }
 
-    private fun drain(codec: MediaCodec, container: WxgfFormat.Container): Bitmap? {
+    private fun open(container: WxgfFormat.Container): MediaCodec {
+        val codec = MediaCodec.createDecoderByType(MIME)
+        try {
+            val format = MediaFormat.createVideoFormat(MIME, container.width, container.height)
+                .apply {
+                    setByteBuffer(CSD_KEY, ByteBuffer.wrap(container.parameterSets))
+                    setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_INPUT_BYTES)
+                }
+            codec.configure(format, null, null, 0)
+            codec.start()
+        } catch (e: Exception) {
+            release(codec)
+            throw e
+        }
+        return codec
+    }
+
+    private fun release(codec: MediaCodec?) {
+        if (codec == null) return
+        runCatching { codec.stop() }
+        runCatching { codec.release() }
+    }
+
+    /**
+     * 依次把 AU 喂进去、把画面取出来。
+     *
+     * [onFrame] 返回 true 表示已经拿到想要的（首帧/够帧数），可以提前停。
+     * 返回值表示有没有正常跑完（不代表一定解出了帧）。
+     */
+    private fun pump(
+        codec: MediaCodec,
+        container: WxgfFormat.Container,
+        timeoutMs: Long,
+        onFrame: (Image) -> Boolean
+    ): Boolean {
         val info = MediaCodec.BufferInfo()
-        val deadline = SystemClock.elapsedRealtime() + ATTEMPT_TIMEOUT_MS
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
         var next = 0
-        var frame = 0L
+        var timestampUs = 0L
+        var endQueued = false
         while (SystemClock.elapsedRealtime() < deadline) {
-            if (next < container.units.size) {
-                val input = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_US)
-                if (input >= 0) {
-                    val buffer = codec.getInputBuffer(input)
-                    val unit = container.units[next++]
+            val input = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_US)
+            if (input >= 0) {
+                val buffer = codec.getInputBuffer(input)
+                if (next < container.units.size) {
+                    val unit = container.units[next]
                     if (buffer == null || buffer.capacity() < unit.size) {
-                        AppLog.log("emoji", "wxgf input too small ${buffer?.capacity()} < ${unit.size}")
-                        return null
+                        AppLog.log(
+                            "emoji",
+                            "wxgf input too small ${buffer?.capacity()} < ${unit.size}"
+                        )
+                        return false
                     }
                     buffer.clear()
                     buffer.put(unit)
-                    codec.queueInputBuffer(input, 0, unit.size, frame * FRAME_INTERVAL_US, 0)
-                    frame++
+                    codec.queueInputBuffer(input, 0, unit.size, timestampUs, 0)
+                    timestampUs += FRAME_INTERVAL_US
+                    next++
+                } else if (!endQueued) {
+                    codec.queueInputBuffer(
+                        input, 0, 0, timestampUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                    )
+                    endQueued = true
+                } else {
+                    codec.queueInputBuffer(input, 0, 0, timestampUs, 0)
                 }
             }
+
             val output = codec.dequeueOutputBuffer(info, DEQUEUE_TIMEOUT_US)
             when {
                 output >= 0 -> {
-                    val bitmap = runCatching {
-                        codec.getOutputImage(output)?.let(::toBitmap)
-                    }.getOrNull()
+                    val image = runCatching { codec.getOutputImage(output) }.getOrNull()
+                    val enough = image != null && runCatching { onFrame(image) }.getOrDefault(false)
                     codec.releaseOutputBuffer(output, false)
-                    if (bitmap != null) {
-                        AppLog.log(
-                            "emoji",
-                            "wxgf decoded ${bitmap.width}x${bitmap.height} " +
-                                "codec=${codec.name} units=${container.units.size}"
-                        )
-                        return bitmap
-                    }
+                    if (enough) return true
+                    if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) return true
                 }
 
                 output == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED ->
                     AppLog.log("emoji", "wxgf output format ${codec.outputFormat}")
-
-                info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0 -> break
             }
         }
-        AppLog.log("emoji", "wxgf no frame codec=${codec.name} units=${container.units.size}")
-        return null
+        AppLog.log("emoji", "wxgf pump timeout codec=${codec.name} units=${container.units.size}")
+        return false
     }
 
     /** 兜底路径：封装成 MP4 再让系统取首帧，解码器不认识 ByteBuffer 输出时用。 */
@@ -162,8 +232,9 @@ object WxgfDecoder {
      * 参数集只放在 csd-0 里（对应 hvc1 的语义）。返回是否成功。
      */
     private fun mux(container: WxgfFormat.Container, target: File): Boolean {
+        // csd 用 hvcC 的长度前缀格式：MediaMuxer 按这个解析，给 Annex-B 会写出坏掉的 hvcC
         val format = MediaFormat.createVideoFormat(MIME, container.width, container.height).apply {
-            setByteBuffer(CSD_KEY, ByteBuffer.wrap(container.parameterSets))
+            setByteBuffer(CSD_KEY, ByteBuffer.wrap(WxgfFormat.lengthPrefixed(container.parameterSets)))
         }
         var muxer: MediaMuxer? = null
         var started = false
@@ -211,13 +282,18 @@ object WxgfDecoder {
         }
     }
 
+    private fun toBitmap(image: Image): Bitmap? {
+        val frame = toFrame(image) ?: return null
+        return Bitmap.createBitmap(frame.argb, frame.width, frame.height, Bitmap.Config.ARGB_8888)
+    }
+
     /**
-     * YUV_420_888 → ARGB_8888。
+     * YUV_420_888 → ARGB 像素。
      *
      * 输出的行宽常常带对齐填充，必须按 [Image.Plane] 的 rowStride/pixelStride 取值，
      * 不能按「宽 × 高」假定连续存放；可见区域还要用 cropRect 裁。
      */
-    private fun toBitmap(image: Image): Bitmap? {
+    private fun toFrame(image: Image): Frame? {
         if (image.planes.size < 3) return null
         val crop = image.cropRect
         val width = crop.width()
@@ -249,7 +325,7 @@ object WxgfDecoder {
                     (0xFF shl 24) or (clamp(r) shl 16) or (clamp(g) shl 8) or clamp(b)
             }
         }
-        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
+        return Frame(width, height, pixels)
     }
 
     private fun clamp(value: Int): Int = when {

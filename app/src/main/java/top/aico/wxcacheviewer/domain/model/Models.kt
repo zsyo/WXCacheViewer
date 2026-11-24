@@ -29,7 +29,8 @@ val FileType.mime: String
         FileType.PNG -> "image/png"
         FileType.GIF -> "image/gif"
         FileType.WEBP -> "image/webp"
-        FileType.WXGF -> "image/png"
+        // 微信私有动图，导出的是重新编码的 GIF
+        FileType.WXGF -> "image/gif"
         FileType.ZIP -> "application/zip"
         FileType.PDF -> "application/pdf"
         FileType.DOC -> "application/msword"
@@ -57,8 +58,8 @@ val FileType.extension: String
         FileType.PNG -> "png"
         FileType.GIF -> "gif"
         FileType.WEBP -> "webp"
-        // wxgf 落盘与导出的都是解出来的首帧 PNG
-        FileType.WXGF -> "png"
+        // wxgf 里是 HEVC 动图，导出的是重新编码的 GIF（网格缩略图另存 PNG）
+        FileType.WXGF -> "gif"
         FileType.ZIP -> "zip"
         FileType.PDF -> "pdf"
         FileType.DOC -> "doc"
@@ -75,7 +76,7 @@ val FileType.extension: String
         FileType.UNKNOWN -> "bin"
     }
 
-/** 能交给图片预览页的类型。wxgf 会先解出首帧，所以也算图片。 */
+/** 能交给图片预览页的类型。wxgf 是动图，预览页里按视频循环播放，所以也算在内。 */
 val FileType.isImage: Boolean
     get() = this == FileType.JPEG || this == FileType.PNG ||
         this == FileType.GIF || this == FileType.WEBP || this == FileType.WXGF

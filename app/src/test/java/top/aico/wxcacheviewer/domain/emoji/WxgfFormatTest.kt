@@ -216,6 +216,19 @@ class WxgfFormatTest {
     }
 
     @Test
+    fun lengthPrefixedKeepsParameterSetsForMuxer() {
+        val (vps, sps, pps) = parameterSets()
+        val slice = nal(19, ByteArray(6) { 0x44 })
+        // MediaMuxer 收 csd 时按 hvcC 解析，参数集要带上、起始码换成 4 字节长度
+        val expected = listOf(vps, sps, pps, slice).fold(ByteArray(0)) { acc, unit ->
+            val body = unit.copyOfRange(startCode.size, unit.size)
+            acc + byteArrayOf(0, 0, 0, body.size.toByte()) + body
+        }
+
+        assertArrayEquals(expected, WxgfFormat.lengthPrefixed(join(vps, sps, pps, slice)))
+    }
+
+    @Test
     fun sampleDataUsesLengthPrefixAndDropsParameterSets() {
         val (vps, sps, pps) = parameterSets()
         val slice = nal(19, ByteArray(6) { 0x44 })

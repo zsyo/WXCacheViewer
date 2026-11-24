@@ -101,25 +101,37 @@ object WxgfFormat {
         bytes.size >= MAGIC.size && MAGIC.indices.all { bytes[it] == MAGIC[it] }
 
     /**
-     * 把一个访问单元转成 MP4 样本：每个 NAL 前面换成 4 字节大端长度。
+     * 把一段 Annex-B 码流转成 hvcC 风格：每个 NAL 前面换成 4 字节大端长度。
      *
-     * 参数集（VPS/SPS/PPS）跳过——它们已经作为 csd 交给封装器，重复放在样本里
-     * 与 hvc1 的语义不符。空 NAL 也丢掉，否则会写出 0 长度的伪样本。
+     * 注意两种 csd 约定不一样：`MediaCodec` 解码器要 Annex-B（带起始码），
+     * 而 `MediaMuxer` 收 csd 时按 hvcC 解析、要长度前缀。混用会写出解不了的 MP4。
+     *
+     * 参数集（VPS/SPS/PPS）默认保留；[skipParameterSets] 为真时丢掉——
+     * 写 MP4 样本时它们已经在 csd 里，重复放进样本与 hvc1 的语义不符。
+     * 空 NAL 一律丢掉，否则会写出 0 长度的伪样本。
      */
-    fun toSampleData(unit: ByteArray): ByteArray {
-        val out = java.io.ByteArrayOutputStream(unit.size)
-        for (nal in nalUnits(unit)) {
+    fun lengthPrefixed(annexB: ByteArray, skipParameterSets: Boolean = false): ByteArray {
+        val out = java.io.ByteArrayOutputStream(annexB.size)
+        for (nal in nalUnits(annexB)) {
             val size = nal.to - nal.payload
             if (size <= 1) continue
-            if (nalType(unit, nal.payload) in PARAMETER_SET_TYPES) continue
+            if (skipParameterSets && nalType(annexB, nal.payload) in PARAMETER_SET_TYPES) continue
             out.write((size ushr 24) and 0xFF)
             out.write((size ushr 16) and 0xFF)
             out.write((size ushr 8) and 0xFF)
             out.write(size and 0xFF)
-            out.write(unit, nal.payload, size)
+            out.write(annexB, nal.payload, size)
         }
         return out.toByteArray()
     }
+
+    /**
+     * 把一个访问单元转成 MP4 样本：每个 NAL 前面换成 4 字节大端长度。
+     *
+     * 参数集（VPS/SPS/PPS）跳过——它们已经作为 csd 交给封装器，重复放在样本里
+     * 与 hvc1 的语义不符。
+     */
+    fun toSampleData(unit: ByteArray): ByteArray = lengthPrefixed(unit, skipParameterSets = true)
 
     /** 解析失败（不是 wxgf、头字段不合理、找不到分区、取不到参数集）时返回 null。 */
     fun parse(bytes: ByteArray): Container? {

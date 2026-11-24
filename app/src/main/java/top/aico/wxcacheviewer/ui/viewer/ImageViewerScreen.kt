@@ -42,6 +42,7 @@ import top.aico.wxcacheviewer.data.image.CoilImageLoaders
 import top.aico.wxcacheviewer.data.log.AppLog
 import top.aico.wxcacheviewer.data.media.MediaPreparer
 import top.aico.wxcacheviewer.domain.model.CacheFile
+import top.aico.wxcacheviewer.domain.model.FileType
 import top.aico.wxcacheviewer.ui.common.formatFileSize
 import top.aico.wxcacheviewer.ui.common.formatModifiedAt
 import java.io.File
@@ -161,7 +162,12 @@ private fun ViewerPage(file: CacheFile, preparer: MediaPreparer) {
     val prepared by produceState<File?>(initialValue = null, key1 = file.key) {
         // producer 异常会抛到组合导致整屏崩溃，兜住后显示失败提示而不是无限转圈
         value = try {
-            preparer.prepare(file)
+            // wxgf 是动图，要的是整段重编码的 GIF；其余按普通图片/动图处理
+            if (file.type == FileType.WXGF) {
+                preparer.prepareAnimated(file)
+            } else {
+                preparer.prepare(file)
+            }
         } catch (e: Exception) {
             AppLog.log("viewer", "prepare failed ${file.key}: ${e.message}")
             null

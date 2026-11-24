@@ -71,6 +71,69 @@ class MediaPreparer(
         }
     }
 
+    /**
+     * wxgf 的动图版本：把码流解出来重编码成 GIF，供预览页循环播放。
+     *
+     * 跟 [prepare] 的首帧 PNG 各存一份：网格要的是静态缩略图（几十张图一起加载，
+     * 不能都放动图），全屏才需要动起来。不是 wxgf 时返回 null。
+     */
+    suspend fun prepareAnimated(file: CacheFile): File? = withContext(Dispatchers.IO) {
+        if (file.type != FileType.WXGF) return@withContext null
+        val mutex = locks.getOrPut("${file.key}$ANIMATED_MARK") { Mutex() }
+        mutex.withLock {
+            val target = animatedFile(file)
+            if (target.isFile && target.length() > 0) {
+                target.setLastModified(System.currentTimeMillis())
+                return@withLock target
+            }
+            semaphore.withPermit {
+                withContext(NonCancellable) {
+                    target.delete()
+                    val ready = encodeGif(file, target)
+                    if (ready) {
+                        prune()
+                        target
+                    } else {
+                        target.delete()
+                        null
+                    }
+                }
+            }
+        }
+    }
+
+    private fun animatedFile(file: CacheFile): File {
+        val dir = File(rootDir, file.sourceId).apply { mkdirs() }
+        // 缓存名带上编码版本：帧率/格式调整后旧动图自动失效
+        val name = "${digest("${file.key}#${file.size}#${EmojiContent.CACHE_TAG}")}." +
+            FileType.WXGF.extension
+        return File(dir, name)
+    }
+
+    /** root 复制原件，解密后逐帧解码重编码成 GIF。中间的原件用完即删。 */
+    private suspend fun encodeGif(file: CacheFile, target: File): Boolean {
+        val raw = File(target.parentFile, target.name + RAW_SUFFIX)
+        raw.delete()
+        if (!copyFromRoot(file, raw)) {
+            raw.delete()
+            return false
+        }
+        val ok = try {
+            val key = if (file.encrypted) emojiKeys.keyFor(file.accountHash) else null
+            if (file.encrypted && key == null) {
+                AppLog.log("media", "decrypt key missing ${file.relativePath}")
+                false
+            } else {
+                EmojiContent.materializeAnimated(raw.readBytes(), key, file.encrypted, target)
+            }
+        } catch (e: Exception) {
+            AppLog.log("media", "wxgf gif failed ${file.relativePath}: ${e.message}")
+            false
+        }
+        raw.delete()
+        return ok
+    }
+
     private fun targetFile(file: CacheFile): File {
         val dir = File(rootDir, file.sourceId).apply { mkdirs() }
         val marker = if (file.encrypted) DECRYPTED_MARK else ""
@@ -163,19 +226,29 @@ class MediaPreparer(
             .joinToString("") { "%02x".format(it) }
             .take(16)
 
-    /** 只保留最近使用的若干张图片，避免私有目录无限增长。 */
+    /**
+     * 只保留最近使用的若干份，并按总体积兜底。
+     *
+     * wxgf 的动图一件就有几 MB（63 帧 320×320），只按件数限制会让缓存涨到几百 MB。
+     * 正在复制的 `.raw` 原件跳过，别把别人手上的中间文件删了。
+     */
     private fun prune() {
         val files = rootDir.walkTopDown()
-            .filter { it.isFile }
+            .filter { it.isFile && !it.name.endsWith(RAW_SUFFIX) }
             .sortedByDescending { it.lastModified() }
             .toList()
-        files.drop(MAX_CACHED_FILES).forEach { it.delete() }
+        var total = 0L
+        files.forEachIndexed { index, file ->
+            total += file.length()
+            if (index >= MAX_CACHED_FILES || total > MAX_CACHED_BYTES) file.delete()
+        }
     }
 
     private companion object {
         const val DIR_NAME = "media"
         const val MAX_CONCURRENT = 3
         const val MAX_CACHED_FILES = 300
+        const val MAX_CACHED_BYTES = 64L * 1024 * 1024
         const val COPY_TIMEOUT_MS = 60_000L
 
         /** 解密产物的文件名标记：与「原件直通」区分开，避免两种内容共用同一个缓存名。 */
@@ -183,5 +256,8 @@ class MediaPreparer(
 
         /** 加密表情的原件临时后缀，解密完成后删除。 */
         const val RAW_SUFFIX = ".raw"
+
+        /** 动图产物的锁与缓存名标记：跟同名的首帧 PNG 分开。 */
+        const val ANIMATED_MARK = "#animated"
     }
 }
