@@ -59,10 +59,15 @@ class AccountViewModel(application: Application) : AndroidViewModel(application)
             }
             AppLog.log("account", "rootState=$root")
             if (root is RootState.Unavailable) {
-                val diagnostics = RootDiagnostics.collect(getApplication(), executor)
-                _uiState.update {
-                    it.copy(loading = false, rootState = root, diagnostics = diagnostics)
-                }
+                // 先让引导页出来：su 被拒绝时每条探测命令都要等，攒完诊断再显示会让用户
+                // 对着「正在读取账号」发呆十几秒。诊断随后补上，界面自己会刷新。
+                _uiState.update { it.copy(loading = false, rootState = root) }
+                // 没有 su 二进制时跑 shell 探测毫无信息量，只留设备环境；
+                // 授权超时同理，否则又是一轮等待。被拒绝或原因不明时才有必要看 su 到底回了什么。
+                val privileged = root.reason == RootState.Reason.DENIED ||
+                    root.reason == RootState.Reason.UNKNOWN
+                val diagnostics = RootDiagnostics.collect(getApplication(), executor, privileged)
+                _uiState.update { it.copy(diagnostics = diagnostics) }
                 return@launch
             }
             try {

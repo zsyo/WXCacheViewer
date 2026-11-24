@@ -65,10 +65,21 @@
     <string name="player_seek_forward">快进</string>
     <string name="player_seek_backward">快退</string>
     <string name="player_speed_failed">当前视频无法调整播放速度</string>
-    <string name="root_error_no_su">未检测到 root 权限，请确认设备已 root 并安装 su</string>
-    <string name="root_error_denied">su 授权被拒绝，请在 Magisk 中允许本应用</string>
-    <string name="root_error_timeout">root 授权超时，请重试</string>
-    <string name="root_error_unknown">root 状态未知</string>
+    <string name="root_guide_title">需要 root 权限</string>
+    <string name="root_guide_why">微信把缓存放在应用私有目录 /data/user/0/com.tencent.mm，Android 只允许 root 身份读取。这不是「有个权限没给」——本应用申请不到，也没有别的办法绕过，只能借助设备上的 root。</string>
+    <string name="root_guide_no_su">这台设备还没有 root。要让应用读到微信缓存，需要先完成 root：解锁 BootLoader，刷入 Magisk、KernelSU 或 APatch，确认能正常授权后回到这里重新检测。</string>
+    <string name="root_guide_denied">设备已经 root，但这次的 su 授权被拒绝了。打开 root 管理器的超级用户列表，把「微信缓存查看器」改成允许；有些管理器会记住拒绝，改完再点重新检测。</string>
+    <string name="root_guide_timeout">等待 root 授权时超时了。授权弹窗可能被系统的「后台弹出界面」限制拦下——切到 root 管理器看有没有待处理的请求，允许后回来重新检测。</string>
+    <string name="root_guide_unknown">没能拿到明确的失败原因。先确认设备已 root，并在 root 管理器里允许本应用，再点重新检测；仍然失败可以展开下面的诊断信息看看。</string>
+    <string name="root_guide_steps_title">大致步骤</string>
+    <string name="root_guide_step_1">1. 解锁 BootLoader，刷入 Magisk、KernelSU 或 APatch</string>
+    <string name="root_guide_step_2">2. 打开 root 管理器，确认 root 正常</string>
+    <string name="root_guide_step_3">3. 回到本应用点「重新检测」，在弹窗里允许授权</string>
+    <string name="root_guide_check">重新检测</string>
+    <string name="root_guide_magisk">了解 Magisk</string>
+    <string name="root_guide_diagnostics_show">查看诊断信息</string>
+    <string name="root_guide_diagnostics_hide">收起诊断信息</string>
+    <string name="root_guide_hint">没有 root 时读不到微信的私有目录，这一点没法靠其它权限或工具绕过。</string>
 
     <string name="settings">设置</string>
     <string name="settings_section_data">数据</string>

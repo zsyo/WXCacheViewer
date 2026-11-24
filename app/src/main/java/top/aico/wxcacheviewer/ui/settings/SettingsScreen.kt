@@ -53,12 +53,12 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import kotlinx.coroutines.launch
 import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.domain.ExportLocation
 import top.aico.wxcacheviewer.domain.update.UpdateChannel
 import top.aico.wxcacheviewer.ui.common.AppInfo
+import top.aico.wxcacheviewer.ui.common.openUrl
 import top.aico.wxcacheviewer.ui.common.formatFileSize
 import top.aico.wxcacheviewer.viewmodel.SettingsUiState
 
@@ -646,7 +646,3 @@ private fun AboutRow(
         }
     }
 }
-
-private fun openUrl(context: Context, url: String): Boolean = runCatching {
-    context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
-}.isSuccess

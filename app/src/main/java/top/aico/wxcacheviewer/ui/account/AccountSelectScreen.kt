@@ -29,6 +29,7 @@ import top.aico.wxcacheviewer.R
 import top.aico.wxcacheviewer.data.root.RootState
 import top.aico.wxcacheviewer.ui.common.ErrorView
 import top.aico.wxcacheviewer.ui.common.LoadingView
+import top.aico.wxcacheviewer.ui.common.PermissionGuideScreen
 import top.aico.wxcacheviewer.viewmodel.AccountUiState
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -45,10 +46,13 @@ fun AccountSelectScreen(
         }
     ) { padding ->
         when {
-            state.rootState is RootState.Unavailable -> ErrorView(
-                message = rootErrorMessage(state.rootState.reason),
+            // 没 root 时给完整引导：讲清为什么读不到、卡在哪一步、怎么补救。
+            // 诊断信息留在折叠区，不让一屏 shell 输出顶在最前面。
+            state.rootState is RootState.Unavailable -> PermissionGuideScreen(
+                reason = state.rootState.reason,
+                diagnostics = state.diagnostics,
                 onRetry = onRetry,
-                details = state.diagnostics
+                modifier = Modifier.padding(padding)
             )
 
             state.loading -> LoadingView(text = stringResource(id = R.string.loading))
@@ -152,12 +156,4 @@ private fun AccountItem(
             }
         }
     }
-}
-
-@Composable
-private fun rootErrorMessage(reason: RootState.Reason): String = when (reason) {
-    RootState.Reason.NO_SU -> stringResource(id = R.string.root_error_no_su)
-    RootState.Reason.DENIED -> stringResource(id = R.string.root_error_denied)
-    RootState.Reason.TIMEOUT -> stringResource(id = R.string.root_error_timeout)
-    RootState.Reason.UNKNOWN -> stringResource(id = R.string.root_error_unknown)
 }

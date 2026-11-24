@@ -10,6 +10,10 @@ import java.io.File
 /**
  * 账号发现失败时的现场取证。结果返回给界面，同时写入应用内 files/diagnostics.txt
  * 并通过 root 复制到 /sdcard/MT2/mcp/diagnostics.txt。
+ *
+ * [privileged] 为 false 时不跑任何需要 root 的探测：没有 su 时这些命令要么立刻报错、
+ * 要么每条都等满超时，攒出几十秒空白期，而信息量为零。此时只记录设备环境与
+ * 「应用自己能不能看到微信目录」，这恰恰是判断「是不是没 root」的关键证据。
  */
 object RootDiagnostics {
 
@@ -17,15 +21,26 @@ object RootDiagnostics {
 
     suspend fun collect(
         context: Context,
-        executor: RootCommandExecutor
+        executor: RootCommandExecutor,
+        privileged: Boolean = true
     ): String = withContext(Dispatchers.IO) {
         val ownDir = context.filesDir.parentFile?.absolutePath ?: context.filesDir.absolutePath
         val report = StringBuilder()
         report.appendLine("sdk=${Build.VERSION.SDK_INT} release=${Build.VERSION.RELEASE} model=${Build.MODEL}")
         report.appendLine("abi=${Build.SUPPORTED_ABIS.firstOrNull()}")
-        report.appendLine("namespaceMode=${executor.currentMode()}")
+        report.appendLine("privileged=$privileged")
         report.appendLine("appSees /data=${File("/data").exists()} /data/user/0=${File("/data/user/0").exists()} " +
             "/data/user/0/com.tencent.mm=${File("/data/user/0/com.tencent.mm").exists()}")
+
+        if (!privileged) {
+            report.appendLine("未获得可用的 root 通道，已跳过 shell 探测")
+            val text = report.toString()
+            publish(context, executor, text, share = false)
+            AppLog.log("diag", "collected ${text.length} chars (unprivileged)")
+            return@withContext text
+        }
+
+        report.appendLine("namespaceMode=${executor.currentMode()}")
 
         appendProbe(report, executor, "id", "id")
         appendProbe(report, executor, "grep", "echo abc123 | grep -E '^[a-z]+[0-9]+\$'")
@@ -72,10 +87,15 @@ object RootDiagnostics {
         text
     }
 
-    private suspend fun publish(context: Context, executor: RootCommandExecutor, text: String) {
+    private suspend fun publish(
+        context: Context,
+        executor: RootCommandExecutor,
+        text: String,
+        share: Boolean = true
+    ) {
         val local = File(context.filesDir, "diagnostics.txt")
         runCatching { local.writeText(text) }
-        if (!local.exists()) return
+        if (!share || !local.exists()) return
         val command = "cp ${WxPaths.shellQuote(local.absolutePath)} " +
             "${WxPaths.shellQuote(SHARED_FILE)} && chmod 0644 ${WxPaths.shellQuote(SHARED_FILE)}"
         runCatching { executor.run(command) }

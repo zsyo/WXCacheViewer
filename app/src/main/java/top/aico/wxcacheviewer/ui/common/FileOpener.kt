@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
+import androidx.core.net.toUri
 import top.aico.wxcacheviewer.domain.model.CacheFile
 import top.aico.wxcacheviewer.domain.model.mime
 import java.io.File
@@ -24,6 +25,16 @@ fun mimeOf(file: CacheFile): String {
     }
     return file.type.mime
 }
+
+/**
+ * 用系统浏览器打开链接。应用本身不联网，跳转交给浏览器处理。
+ * 没有能处理 ACTION_VIEW 的应用时返回 false，由调用方决定怎么提示。
+ */
+fun openUrl(context: Context, url: String): Boolean = runCatching {
+    val intent = Intent(Intent.ACTION_VIEW, url.toUri())
+    if (context !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    context.startActivity(intent)
+}.isSuccess
 
 /**
  * 用系统的「打开方式」打开应用缓存里复制出来的文件。
