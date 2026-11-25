@@ -11,7 +11,12 @@
 | 无 root：引导页 | 视频号缓存 | 表情批量导出 |
 |:---:|:---:|:---:|
 | <img src="docs/screenshots/root-guide.jpg" width="230" alt="无 root 时的权限引导页"> | <img src="docs/screenshots/finder-video.jpg" width="230" alt="视频号缓存网格列表"> | <img src="docs/screenshots/emoji-export.jpg" width="230" alt="表情多选导出进度"> |
-| 没有 root 时不甩错误代码，按「没有 su / 授权被拒 / 授权超时」分别给处理办法 | 首帧缩略图、体积与修改时间，顶栏切换账号，网格与列表可切 | 多选后统一导出，GIF 与 wxgf 动图都落成标准文件 |
+
+从左到右：
+
+- **引导页**：没有 root 时不甩错误代码，按「没有 su / 授权被拒 / 授权超时」分别给处理办法
+- **视频号缓存**：首帧缩略图、体积与修改时间，顶栏切换账号，网格与列表可切
+- **表情批量导出**：多选后统一导出，GIF 与 wxgf 动图都落成标准文件
 
 ## 功能
 
@@ -332,4 +337,3 @@ spec/                    每个功能的规格文档
 - SILK v3 解码器：SILK SDK License（Skype Limited，BSD 三条款式，与 GPL 兼容）
 - LAME：LGPL 2.0 及以后版本（GPL 明确允许升格为 GPL 使用）
 - AndroidX、Jetpack Compose、Media3、Coil：Apache 2.0
-
