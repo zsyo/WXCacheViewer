@@ -514,7 +514,11 @@ fun GalleryScreen(
     }
 
     playingFile?.let { playing ->
-        PlayerScreen(file = playing, onClose = { playingFile = null })
+        PlayerScreen(
+            file = playing,
+            onRequestSave = onSaveOne,
+            onClose = { playingFile = null }
+        )
     }
 
     // 图片预览只翻图片；文件页里的文档、压缩包走系统「打开方式」

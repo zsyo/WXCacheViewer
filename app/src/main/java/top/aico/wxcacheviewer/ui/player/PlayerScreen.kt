@@ -1,6 +1,8 @@
 package top.aico.wxcacheviewer.ui.player
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
@@ -9,8 +11,10 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -41,6 +45,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -91,15 +97,25 @@ import top.aico.wxcacheviewer.domain.model.CacheFile
 import top.aico.wxcacheviewer.ui.common.formatDuration
 import kotlin.math.roundToInt
 
-/** 全屏视频播放：顶栏与底栏跟随控制层显隐，右侧悬浮横屏按钮。 */
+/**
+ * 全屏视频播放：顶栏与底栏跟随控制层显隐，顶栏右侧可直接导出当前视频。
+ * 顶栏文件名支持长按复制——反馈某个视频有问题时，直接贴文件名最省事。
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
+fun PlayerScreen(
+    file: CacheFile,
+    onRequestSave: (CacheFile, (Boolean, String) -> Unit) -> Unit,
+    onClose: () -> Unit
+) {
     val context = LocalContext.current
     val resources = LocalResources.current
     val density = LocalDensity.current.density
     val scope = rememberCoroutineScope()
     val preparer = remember { VideoPreparer(RootCommandExecutor()) }
     val settings = remember { SettingsRepository(context) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val copiedHint = resources.getString(R.string.viewer_name_copied)
     val volumePopupPositionProvider = remember {
         VolumePopupPositionProvider(gapPx = (6 * density).toInt())
     }
@@ -427,6 +443,17 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
                             WindowInsetsSides.Top + WindowInsetsSides.Horizontal
                         )
                     )
+                    // 顶栏自己吃掉手势：否则空白处按下会穿透到底下的手势层，
+                    // 长按标题复制时会顺带触发快进 / 快退
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = {
+                                controlsVisible = !controlsVisible
+                                interactionTick++
+                            },
+                            onLongPress = {}
+                        )
+                    }
                     .padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -443,7 +470,64 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .combinedClickable(
+                            // 点标题与点画面一样切换控制层，别在这里留一块点不动的死角
+                            onClick = {
+                                controlsVisible = !controlsVisible
+                                interactionTick++
+                            },
+                            onLongClick = {
+                                val clipboard =
+                                    context.getSystemService(Context.CLIPBOARD_SERVICE)
+                                        as ClipboardManager
+                                clipboard.setPrimaryClip(
+                                    ClipData.newPlainText(file.name, file.name)
+                                )
+                                scope.launch { snackbarHostState.showSnackbar(copiedHint) }
+                            }
+                        )
+                )
+                IconButton(
+                    onClick = {
+                        onRequestSave(file) { _, message ->
+                            scope.launch { snackbarHostState.showSnackbar(message) }
+                        }
+                    }
+                ) {
+                    Icon(
+                        painter = painterResource(id = R.drawable.ic_export),
+                        contentDescription = stringResource(id = R.string.file_action_export),
+                        tint = Color.White
+                    )
+                }
+            }
+        }
+
+        if (controlsVisible && !preparing && errorMessage == null) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .size(64.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.4f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = togglePlayback
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    painter = painterResource(
+                        id = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+                    ),
+                    contentDescription = stringResource(
+                        id = if (isPlaying) R.string.player_pause else R.string.player_play
+                    ),
+                    tint = Color.White,
+                    modifier = Modifier.size(36.dp)
                 )
             }
         }
@@ -601,6 +685,17 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
                 }
             }
         }
+
+        // 复制文件名、导出结果的提示；跟着底部控制条一起避让手势区
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(
+                    WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)
+                )
+                .padding(bottom = 72.dp)
+        )
     }
 }
 
