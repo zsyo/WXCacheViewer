@@ -14,14 +14,19 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -360,6 +365,12 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
                             listOf(Color.Black.copy(alpha = 0.65f), Color.Transparent)
                         )
                     )
+                    // 应用强制边到边（targetSdk 35），不主动让开就会压到状态栏与挖孔上
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(
+                            WindowInsetsSides.Top + WindowInsetsSides.Horizontal
+                        )
+                    )
                     .padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -419,7 +430,13 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color.Black.copy(alpha = 0.55f))
-                    .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)
+                    // 让开手势条：否则拖进度条容易触发返回 / 回桌面手势
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(
+                            WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal
+                        )
+                    )
+                    .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 8.dp)
             ) {
                 Text(
                     text = formatDuration(positionMs),
