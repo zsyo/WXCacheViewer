@@ -63,6 +63,8 @@
     <string name="player_mute">静音</string>
     <string name="player_unmute">恢复音量</string>
     <string name="player_speed">倍速</string>
+    <string name="player_fullscreen">横屏全屏</string>
+    <string name="player_exit_fullscreen">退出横屏</string>
     <string name="player_seek_forward">快进</string>
     <string name="player_seek_backward">快退</string>
     <string name="player_speed_failed">当前视频无法调整播放速度</string>

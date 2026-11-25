@@ -1,5 +1,10 @@
 package top.aico.wxcacheviewer.ui.player
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -55,6 +60,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
@@ -70,6 +76,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -82,6 +91,7 @@ import top.aico.wxcacheviewer.domain.model.CacheFile
 import top.aico.wxcacheviewer.ui.common.formatDuration
 import kotlin.math.roundToInt
 
+/** 全屏视频播放：顶栏与底栏跟随控制层显隐，右侧悬浮横屏按钮。 */
 @Composable
 fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
     val context = LocalContext.current
@@ -94,6 +104,21 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
         VolumePopupPositionProvider(gapPx = (6 * density).toInt())
     }
     val videoPlayer = remember(file.name) { SimpleVideoPlayer(context) }
+
+    // 应用本身不锁方向：横屏是这里临时向 Activity 请求的，离开播放页再还原。
+    val activity = remember(context) { context.findActivity() }
+    val originalOrientation = remember(activity) { activity?.requestedOrientation }
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    // 退出横屏要回到进来之前的方向。原来若是「跟随传感器」，人在横屏姿态下点退出
+    // 会看着毫无反应，所以这种情况直接回竖屏。
+    val restoreOrientation = remember(originalOrientation) {
+        when (originalOrientation) {
+            null,
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED,
+            ActivityInfo.SCREEN_ORIENTATION_SENSOR -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            else -> originalOrientation
+        }
+    }
 
     var copying by remember(file.name) { mutableStateOf(true) }
     var ready by remember(file.name) { mutableStateOf(false) }
@@ -120,6 +145,37 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
     val keepControlsVisible: () -> Unit = {
         controlsVisible = true
         interactionTick++
+    }
+
+    // 横屏播放时把系统栏藏起来，退出横屏或直接关掉播放页都要恢复回来
+    DisposableEffect(landscape, activity) {
+        val controller = activity?.window?.let { window ->
+            WindowCompat.getInsetsController(window, window.decorView)
+        }
+        if (landscape) {
+            controller?.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller?.hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose { controller?.show(WindowInsetsCompat.Type.systemBars()) }
+    }
+
+    DisposableEffect(activity) {
+        onDispose {
+            if (activity != null) activity.requestedOrientation = restoreOrientation
+        }
+    }
+
+    val toggleOrientation: () -> Unit = {
+        if (activity != null) {
+            activity.requestedOrientation = if (landscape) {
+                restoreOrientation
+            } else {
+                // 允许左右两个方向，用户把手机翻过来也不会变成倒着的画面
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            }
+        }
+        keepControlsVisible()
     }
 
     // 播放器回调只在 effect 里设置一次。此前写在 composable 主体里，进度每次更新
@@ -371,7 +427,7 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
                             WindowInsetsSides.Top + WindowInsetsSides.Horizontal
                         )
                     )
-                    .padding(start = 4.dp, end = 12.dp, top = 8.dp, bottom = 16.dp),
+                    .padding(start = 4.dp, end = 4.dp, top = 8.dp, bottom = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onClose) {
@@ -392,29 +448,43 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
             }
         }
 
-        if (controlsVisible && !preparing && errorMessage == null) {
-            Box(
+        // 横屏按钮单独浮在画面右侧，跟着控制层一起显隐，顶栏只留「返回 + 标题 + 导出」
+        AnimatedVisibility(
+            visible = controlsVisible,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.CenterEnd)
+        ) {
+            IconButton(
+                onClick = toggleOrientation,
+                enabled = activity != null,
                 modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(64.dp)
+                    // 横屏时挖孔可能在侧边，让它也退开
+                    .windowInsetsPadding(
+                        WindowInsets.safeDrawing.only(WindowInsetsSides.End)
+                    )
+                    .padding(end = 12.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.4f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = togglePlayback
-                    ),
-                contentAlignment = Alignment.Center
+                    .background(Color.Black.copy(alpha = 0.42f))
             ) {
                 Icon(
                     painter = painterResource(
-                        id = if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play
+                        id = if (landscape) {
+                            R.drawable.ic_fullscreen_exit
+                        } else {
+                            R.drawable.ic_fullscreen
+                        }
                     ),
                     contentDescription = stringResource(
-                        id = if (isPlaying) R.string.player_pause else R.string.player_play
+                        id = if (landscape) {
+                            R.string.player_exit_fullscreen
+                        } else {
+                            R.string.player_fullscreen
+                        }
                     ),
-                    tint = Color.White,
-                    modifier = Modifier.size(36.dp)
+                    tint = if (activity != null) Color.White else Color.White.copy(alpha = 0.4f),
+                    modifier = Modifier.size(22.dp)
                 )
             }
         }
@@ -532,6 +602,16 @@ fun PlayerScreen(file: CacheFile, onClose: () -> Unit) {
             }
         }
     }
+}
+
+/** 从 Compose 的 context 里找出宿主 Activity，用来请求方向与系统栏状态。 */
+private fun Context.findActivity(): Activity? {
+    var current: Context = this
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
 }
 
 /** 音量面板锚定在音量按钮上方，水平方向居中对齐按钮。 */
