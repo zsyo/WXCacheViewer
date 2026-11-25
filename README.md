@@ -6,6 +6,13 @@
 
 > 仅适用于查看**本机、本人账号**的缓存数据。详见文末「免责声明」。
 
+## 界面
+
+| 无 root：引导页 | 视频号缓存 | 表情批量导出 |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/root-guide.jpg" width="230" alt="无 root 时的权限引导页"> | <img src="docs/screenshots/finder-video.jpg" width="230" alt="视频号缓存网格列表"> | <img src="docs/screenshots/emoji-export.jpg" width="230" alt="表情多选导出进度"> |
+| 没有 root 时不甩错误代码，按「没有 su / 授权被拒 / 授权超时」分别给处理办法 | 首帧缩略图、体积与修改时间，顶栏切换账号，网格与列表可切 | 多选后统一导出，GIF 与 wxgf 动图都落成标准文件 |
+
 ## 功能
 
 **账号**
@@ -282,6 +289,7 @@ app/src/main/java/top/aico/wxcacheviewer/
 └── ui/                  Compose 界面：账号选择、相册、文件列表、播放器、图片预览、无 root 引导页
 app/src/main/cpp/        SILK v3 解码器与 LAME 的 C 源码、JNI 入口与 CMake 脚本
 art/                     应用图标的原始设计稿（PNG），据此生成各密度 mipmap
+docs/screenshots/        README 里的界面截图
 spec/                    每个功能的规格文档
 ```
 
