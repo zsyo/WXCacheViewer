@@ -1,7 +1,12 @@
 package top.aico.wxcacheviewer.ui.viewer
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,6 +36,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,7 +57,11 @@ import java.io.File
 /**
  * 全屏图片/动图预览：左右滑动翻页，顶部可保存到相册。
  * 图片本身在微信私有目录里，先由 [MediaPreparer] 复制到应用缓存目录再交给 Coil。
+ *
+ * 顶部的文件名可以长按复制——排查具体某张图时（比如反馈速度不对），
+ * 手抄一串 md5 不现实，复制出来直接贴给开发者最快。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ImageViewerScreen(
     files: List<CacheFile>,
@@ -67,6 +78,8 @@ fun ImageViewerScreen(
     val current = files[pagerState.currentPage.coerceIn(files.indices)]
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val copiedHint = LocalResources.current.getString(R.string.viewer_name_copied)
 
     Box(
         modifier = Modifier
@@ -98,7 +111,19 @@ fun ImageViewerScreen(
                 color = Color.White,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .weight(1f)
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClick = {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                                as ClipboardManager
+                            clipboard.setPrimaryClip(
+                                ClipData.newPlainText(current.name, current.name)
+                            )
+                            scope.launch { snackbarHostState.showSnackbar(copiedHint) }
+                        }
+                    )
             )
             IconButton(
                 onClick = {

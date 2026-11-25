@@ -56,6 +56,7 @@
     <string name="player_prepare_failed">视频准备失败</string>
     <string name="player_play_failed_generic">播放失败：%1$s</string>
     <string name="player_back">返回</string>
+    <string name="viewer_name_copied">已复制文件名</string>
     <string name="player_play">播放</string>
     <string name="player_pause">暂停</string>
     <string name="player_volume">音量</string>
