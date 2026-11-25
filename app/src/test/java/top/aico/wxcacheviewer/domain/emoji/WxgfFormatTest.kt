@@ -34,13 +34,27 @@ class WxgfFormatTest {
         return startCode + byteArrayOf((type shl 1).toByte(), 0x01) + body
     }
 
-    private fun header(width: Int = 320, height: Int = 320, headerLength: Int = 18): ByteArray =
-        "wxgf".toByteArray() +
+    private fun header(
+        width: Int = 320,
+        height: Int = 320,
+        headerLength: Int = 18,
+        delayUnit: Int = 0
+    ): ByteArray {
+        val tail = ByteArray(headerLength - MIN_HEADER) { it.toByte() }
+        // 头长度 19/20 在偏移 17 写统一帧时长（单位 2ms）；21 起后移到 18，写的是帧率
+        when {
+            headerLength == 19 || headerLength == 20 ->
+                tail[DEFAULT_DELAY_OFFSET - MIN_HEADER] = delayUnit.toByte()
+            headerLength >= 21 ->
+                tail[FPS_OFFSET - MIN_HEADER] = delayUnit.toByte()
+        }
+        return "wxgf".toByteArray() +
             byteArrayOf(headerLength.toByte()) +
             u16(0) +
             u16(width) +
             u16(height) +
-            ByteArray(headerLength - MIN_HEADER) { it.toByte() }
+            tail
+    }
 
     /** 分区 = 4 字节大端长度 + 码流本体，长度只算起始码之后的部分。 */
     private fun partition(body: ByteArray): ByteArray = u32(body.size) + body
@@ -165,6 +179,86 @@ class WxgfFormatTest {
 
         assertEquals(WxgfFormat.DEFAULT_FRAME_DELAY_MS, 50)
         assertArrayEquals(intArrayOf(50, 50), container.frameDelaysMs)
+    }
+
+    @Test
+    fun headerCarriesUnifiedDelayFor19ByteContainers() {
+        val (vps, sps, pps) = parameterSets()
+        val first = join(vps, sps, pps, nal(19, ByteArray(16) { 0x44 }))
+        val second = join(nal(1, ByteArray(8) { 0x55 }), nal(1, ByteArray(8) { 0x66 }))
+        // 头长度 19 的容器把统一时长写在偏移 17，单位 2ms：50 → 100ms
+        val bytes = header(headerLength = 19, delayUnit = 50) +
+            partition(first) +
+            block(0) + block(0) +
+            partition(second)
+
+        val container = WxgfFormat.parse(bytes)!!
+
+        assertArrayEquals(intArrayOf(100, 100, 100), container.frameDelaysMs)
+    }
+
+    @Test
+    fun headerDelayUnitIsTwoMilliseconds() {
+        val (vps, sps, pps) = parameterSets()
+        val first = join(vps, sps, pps, nal(19, ByteArray(16) { 0x44 }))
+        // 实测 25 → 50ms、50 → 100ms；这里取 40 验证确实是「乘 2」而不是「等于 50 的巧合」
+        val bytes = header(headerLength = 19, delayUnit = 40) + partition(first)
+
+        assertArrayEquals(intArrayOf(80), WxgfFormat.parse(bytes)!!.frameDelaysMs)
+    }
+
+    @Test
+    fun headerDelayAlsoAppliesTo20ByteContainers() {
+        val (vps, sps, pps) = parameterSets()
+        val first = join(vps, sps, pps, nal(19, ByteArray(16) { 0x44 }))
+        // 头长度 20 只是尾部多一个字节，时长字段位置不变：50 → 100ms
+        val bytes = header(headerLength = 20, delayUnit = 50) + partition(first)
+
+        assertArrayEquals(intArrayOf(100), WxgfFormat.parse(bytes)!!.frameDelaysMs)
+    }
+
+    @Test
+    fun fpsHeaderIsConvertedToMilliseconds() {
+        val (vps, sps, pps) = parameterSets()
+        val first = join(vps, sps, pps, nal(19, ByteArray(16) { 0x44 }))
+        // 头长度 21（版本 2）写的是帧率：10fps → 100ms
+        val bytes = header(headerLength = 21, delayUnit = 10) + partition(first)
+
+        assertArrayEquals(intArrayOf(100), WxgfFormat.parse(bytes)!!.frameDelaysMs)
+    }
+
+    @Test
+    fun slowFpsHeaderMeansLongerFrames() {
+        val (vps, sps, pps) = parameterSets()
+        val first = join(vps, sps, pps, nal(19, ByteArray(16) { 0x44 }))
+        // 5fps → 200ms
+        val bytes = header(headerLength = 21, delayUnit = 5) + partition(first)
+
+        assertArrayEquals(intArrayOf(200), WxgfFormat.parse(bytes)!!.frameDelaysMs)
+    }
+
+    @Test
+    fun blockDelayWinsOverHeaderDefault() {
+        val (vps, sps, pps) = parameterSets()
+        val first = join(vps, sps, pps, nal(19, ByteArray(16) { 0x44 }))
+        val second = nal(1, ByteArray(8) { 0x55 })
+        // 逐帧时长比头里的统一值更具体，写了就该用它
+        val bytes = header(headerLength = 19, delayUnit = 50) +
+            partition(first) +
+            block(70) +
+            partition(second)
+
+        assertArrayEquals(intArrayOf(100, 70), WxgfFormat.parse(bytes)!!.frameDelaysMs)
+    }
+
+    @Test
+    fun ignoresHeaderDelayForOlderContainers() {
+        val (vps, sps, pps) = parameterSets()
+        val first = join(vps, sps, pps, nal(19, ByteArray(16) { 0x44 }))
+        // 头长度 18 没有这一项，偏移 17 是别的字段，不能拿来当时长
+        val bytes = header(headerLength = 18) + partition(first)
+
+        assertArrayEquals(intArrayOf(50), WxgfFormat.parse(bytes)!!.frameDelaysMs)
     }
 
     @Test
@@ -299,5 +393,11 @@ class WxgfFormatTest {
     private companion object {
         /** 与实现里的 MIN_HEADER_BYTES 对齐：魔数 4 + 长度 1 + 版本 2 + 宽高 4。 */
         const val MIN_HEADER = 11
+
+        /** 头长度 19/20 的容器在偏移 17 写统一帧时长（单位 2ms）。 */
+        const val DEFAULT_DELAY_OFFSET = 17
+
+        /** 头长度 21 起把帧率写在偏移 18。 */
+        const val FPS_OFFSET = 18
     }
 }

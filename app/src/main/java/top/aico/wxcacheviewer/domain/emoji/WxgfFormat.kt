@@ -18,9 +18,9 @@ package top.aico.wxcacheviewer.domain.emoji
  *
  * 所以解码不需要 ffmpeg：抠出参数集交给 MediaCodec，就能出图。
  *
- * 私有块里还藏着**逐帧播放时长**：每个块头 2 字节是该帧的毫秒数，0 表示「按默认 50ms」。
- * 这一项与微信自己把 wxgf 转出来的 GIF 逐帧比对过（41 帧/2050ms、30 帧/1700ms、
- * 100 帧/5000ms 三份样本总时长完全一致），见 [frameDelaysMs]。
+ * 私有块里还藏着**逐帧播放时长**：每个块头 2 字节是该帧的毫秒数。写 0 表示「没指定」，
+ * 这时用容器头里的统一时长（头长度 19 才有这一项，单位 2ms）。都拿不到才落到 50ms。
+ * 这些数字都与微信自己把 wxgf 转出来的 GIF 逐帧比对过，见 [frameDelaysMs] 与 [defaultFrameDelay]。
  */
 object WxgfFormat {
 
@@ -59,10 +59,24 @@ object WxgfFormat {
     private const val MAX_SIDE = 8192
 
     /**
-     * 私有块里 0 表示「没写时长」。微信自己的播法就是每帧 50ms（20fps），
-     * 拿它转出来的 GIF 校过：全部是 0 的那几份，GIF 正好都是 5 厘秒一帧。
+     * 拿不到任何时长信息时的兜底值。
+     *
+     * 注意它**不是**通用默认值：头长度 19 的容器会在头部另写一个默认时长，
+     * 私有块里 0 表示「用头部那个」（见 [defaultFrameDelay]）。只有头里也没有时，
+     * 才退到这里的 50ms——早期样本（41 帧、100 帧）转出来的 GIF 正好都是 5 厘秒一帧。
      */
     const val DEFAULT_FRAME_DELAY_MS = 50
+
+    /** 头长度 19/20 的容器在偏移 17 处多一个「默认帧时长」字段。 */
+    private const val HEADER_WITH_DEFAULT_DELAY = 19
+
+    /** 头长度 21 起（版本字段为 2）换了个布局：字段后移到偏移 18，且改成写帧率。 */
+    private const val HEADER_WITH_FPS = 21
+    private const val FPS_OFFSET = 18
+    private const val DEFAULT_DELAY_OFFSET = 17
+
+    /** 19/20 字节的表里单位是 2ms：25 → 50ms，50 → 100ms。 */
+    private const val DEFAULT_DELAY_UNIT_MS = 2
 
     /** 合理帧时长区间：低于 10ms 的 GIF 计时会退化成 1 厘秒，超过 1s 基本是认错了字段。 */
     private const val MIN_FRAME_DELAY_MS = 10
@@ -175,13 +189,42 @@ object WxgfFormat {
         val frames = partitions.map { bytes.copyOfRange(it.start, it.start + it.length) }
         val parameterSets = collectParameterSets(frames) ?: return null
         val perPartition = partitions.map { splitAccessUnits(it.slice(bytes)).size }
+        val defaultDelay = defaultFrameDelay(bytes, headerLength)
         return Container.of(
             width,
             height,
             frames,
             parameterSets,
-            frameDelays(bytes, partitions, perPartition)
+            frameDelays(bytes, partitions, perPartition, defaultDelay)
         )
+    }
+
+    /**
+     * 容器头里的统一帧时长（毫秒）。
+     *
+     * 头部布局随长度变化，但偏移 11 起的结构是稳定的：`帧数-1`、两个 0、`81 80`，
+     * 接着才是时长字段。区别只在版本演进：
+     * - 头长度 19/20：偏移 17 是一字节时长，单位 2ms。25 → 50ms、50 → 100ms、65 → 130ms，
+     *   与微信自己转出的 GIF 逐帧对上（300×300 的 41/100 帧、540×507 的 50 帧、
+     *   400×400 的 16 帧、240×266 的 110 帧）。
+     * - 头长度 21（版本字段 `00 02`）：多了一个字节，字段移到偏移 18，而且写的是**帧率**，
+     *   10 → 100ms、5 → 200ms。这批样本没有 `_gif` 对照，是按「取值只能是 1000/n 的整数」
+     *   与同批头长度 19 的 50（=10fps）推断的。
+     * - 头长度 17/18：没有这一项，逐帧时长全写在私有块里。
+     *
+     * 值不合理时退回 [DEFAULT_FRAME_DELAY_MS]，不要被别的字段带偏。
+     */
+    private fun defaultFrameDelay(bytes: ByteArray, headerLength: Int): Int {
+        if (headerLength >= HEADER_WITH_FPS) {
+            if (FPS_OFFSET >= bytes.size) return DEFAULT_FRAME_DELAY_MS
+            val fps = bytes[FPS_OFFSET].toInt() and 0xFF
+            val value = if (fps > 0) 1000 / fps else 0
+            return if (value in MIN_FRAME_DELAY_MS..MAX_FRAME_DELAY_MS) value else DEFAULT_FRAME_DELAY_MS
+        }
+        if (headerLength < HEADER_WITH_DEFAULT_DELAY) return DEFAULT_FRAME_DELAY_MS
+        if (DEFAULT_DELAY_OFFSET >= bytes.size) return DEFAULT_FRAME_DELAY_MS
+        val value = (bytes[DEFAULT_DELAY_OFFSET].toInt() and 0xFF) * DEFAULT_DELAY_UNIT_MS
+        return if (value in MIN_FRAME_DELAY_MS..MAX_FRAME_DELAY_MS) value else DEFAULT_FRAME_DELAY_MS
     }
 
     /**
@@ -211,25 +254,26 @@ object WxgfFormat {
     /**
      * 逐帧播放时长（毫秒），与访问单元一一对应。
      *
-     * 时长写在分区之间的私有块里，一个块对应紧随其后那个分区的画面，块头 2 字节就是毫秒数。
+     * 时长写在分区之间的私有块里，一个块对应紧随其后那个分区里的画面，块头 2 字节就是毫秒数。
      * 块的长度看文件，实测 100～108 字节；同一间隙里可能有多个块（一个分区装两帧），
      * 所以先按「除块头 2 字节外完全相同」找出块的个数，再按帧数等比摊开。
      *
-     * 认不出块结构、或者值越界时一律退回 [DEFAULT_FRAME_DELAY_MS]——
-     * 宁可按默认速度播，也不要被私有块里的别的字段带偏。
+     * 块里写 0 表示「用容器头里的统一时长」[defaultDelay]，认不出块结构时同样退到它——
+     * 宁可按容器自己标的速度播，也不要被私有块里的别的字段带偏。
      */
     private fun frameDelays(
         bytes: ByteArray,
         partitions: List<Segment>,
-        perPartition: List<Int>
+        perPartition: List<Int>,
+        defaultDelay: Int
     ): IntArray {
-        val delays = IntArray(perPartition.sum()) { DEFAULT_FRAME_DELAY_MS }
+        val delays = IntArray(perPartition.sum()) { defaultDelay }
         var index = 0
         partitions.indices.forEach { p ->
             val count = perPartition[p]
             if (count <= 0) return@forEach
             // 分区 0 前面没有私有块，用默认值
-            val blocks = if (p == 0) emptyList() else blockDelays(bytes, partitions[p - 1], partitions[p])
+            val blocks = if (p == 0) emptyList() else blockDelays(bytes, partitions[p - 1], partitions[p], defaultDelay)
             for (j in 0 until count) {
                 if (index >= delays.size) break
                 if (blocks.isNotEmpty()) {
@@ -243,7 +287,12 @@ object WxgfFormat {
     }
 
     /** 取出 [previous] 与 [next] 之间那块私有数据里的逐帧时长。 */
-    private fun blockDelays(bytes: ByteArray, previous: Segment, next: Segment): List<Int> {
+    private fun blockDelays(
+        bytes: ByteArray,
+        previous: Segment,
+        next: Segment,
+        defaultDelay: Int
+    ): List<Int> {
         val from = previous.start + previous.length
         // 下一分区自己还有 4 字节长度字段，不属于私有块
         val to = next.start - 4
@@ -256,9 +305,9 @@ object WxgfFormat {
             if (size < MIN_BLOCK_BYTES) continue
             // 同一间隙里的块只有块头 2 字节（时长）不同，其余应当完全一致
             if (!sameBeyondDelay(gap, size, count)) continue
-            return (0 until count).map { delayOf(gap, it * size) }
+            return (0 until count).map { delayOf(gap, it * size, defaultDelay) }
         }
-        return listOf(delayOf(gap, 0))
+        return listOf(delayOf(gap, 0, defaultDelay))
     }
 
     private fun sameBeyondDelay(gap: ByteArray, size: Int, count: Int): Boolean {
@@ -270,11 +319,11 @@ object WxgfFormat {
         return true
     }
 
-    /** 块头的 2 字节时长；0 或越界都按默认值算。 */
-    private fun delayOf(gap: ByteArray, offset: Int): Int {
+    /** 块头的 2 字节时长；0 或越界都按 [defaultDelay] 算。 */
+    private fun delayOf(gap: ByteArray, offset: Int, defaultDelay: Int): Int {
         val value = readU16(gap, offset)
-        if (value == 0) return DEFAULT_FRAME_DELAY_MS
-        return if (value in MIN_FRAME_DELAY_MS..MAX_FRAME_DELAY_MS) value else DEFAULT_FRAME_DELAY_MS
+        if (value == 0) return defaultDelay
+        return if (value in MIN_FRAME_DELAY_MS..MAX_FRAME_DELAY_MS) value else defaultDelay
     }
 
     /** 从各区段里找 VPS/SPS/PPS；缺任何一个都返回 null，交给上层判为不可解。 */
