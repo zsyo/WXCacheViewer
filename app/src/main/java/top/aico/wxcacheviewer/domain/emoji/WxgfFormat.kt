@@ -13,10 +13,14 @@ package top.aico.wxcacheviewer.domain.emoji
  * 11..    其余头字段（位打包的帧率、质量等，未用到）
  * ```
  * 主头之后是若干个「分区」：分区前 4 字节是大端长度，紧跟 `00 00 00 01` 起始码和
- * 标准 H.265 Annex-B 码流；分区之间还夹着约 96 字节的私有块。把分区首尾相接、
+ * 标准 H.265 Annex-B 码流；分区之间还夹着约 100 字节的私有块。把分区首尾相接、
  * 去掉那些私有块，得到的就是一段干净的 HEVC 码流（首段里带 VPS/SPS/PPS）。
  *
  * 所以解码不需要 ffmpeg：抠出参数集交给 MediaCodec，就能出图。
+ *
+ * 私有块里还藏着**逐帧播放时长**：每个块头 2 字节是该帧的毫秒数，0 表示「按默认 50ms」。
+ * 这一项与微信自己把 wxgf 转出来的 GIF 逐帧比对过（41 帧/2050ms、30 帧/1700ms、
+ * 100 帧/5000ms 三份样本总时长完全一致），见 [frameDelaysMs]。
  */
 object WxgfFormat {
 
@@ -55,16 +59,34 @@ object WxgfFormat {
     private const val MAX_SIDE = 8192
 
     /**
+     * 私有块里 0 表示「没写时长」。微信自己的播法就是每帧 50ms（20fps），
+     * 拿它转出来的 GIF 校过：全部是 0 的那几份，GIF 正好都是 5 厘秒一帧。
+     */
+    const val DEFAULT_FRAME_DELAY_MS = 50
+
+    /** 合理帧时长区间：低于 10ms 的 GIF 计时会退化成 1 厘秒，超过 1s 基本是认错了字段。 */
+    private const val MIN_FRAME_DELAY_MS = 10
+    private const val MAX_FRAME_DELAY_MS = 1000
+
+    /** 私有块最短长度：2 字节时长 + 长度字段 + 若干头字节。 */
+    private const val MIN_BLOCK_BYTES = 16
+
+    /** 一个间隙里最多这么多个私有块，再多就不像「一帧一块」了。 */
+    private const val MAX_BLOCKS_PER_GAP = 4
+
+    /**
      * 一段可解码的 wxgf 内容。
      *
      * [frames] 每个元素是一段独立的 Annex-B 码流（对应容器里的一个分区），
-     * 首段带 VPS/SPS/PPS；[parameterSets] 是从里抠出来的 csd。
+     * 首段带 VPS/SPS/PPS；[parameterSets] 是从里抠出来的 csd；
+     * [frameDelaysMs] 与 [units] 一一对应，是该帧的播放时长（毫秒）。
      */
     class Container private constructor(
         val width: Int,
         val height: Int,
         val frames: List<ByteArray>,
-        val parameterSets: ByteArray
+        val parameterSets: ByteArray,
+        val frameDelaysMs: IntArray
     ) {
         /**
          * 按访问单元（AU）切好的码流，一个元素就是一帧画面。
@@ -92,8 +114,9 @@ object WxgfFormat {
                 width: Int,
                 height: Int,
                 frames: List<ByteArray>,
-                parameterSets: ByteArray
-            ) = Container(width, height, frames, parameterSets)
+                parameterSets: ByteArray,
+                frameDelaysMs: IntArray
+            ) = Container(width, height, frames, parameterSets, frameDelaysMs)
         }
     }
 
@@ -145,12 +168,20 @@ object WxgfFormat {
         if (width !in MIN_SIDE..MAX_SIDE || height !in MIN_SIDE..MAX_SIDE) return null
 
         // 绝大多数文件用 4 字节起始码；个别只有 3 字节，退一步再试。
-        val frames = scanPartitions(bytes, headerLength, START_CODE_4)
+        val partitions = scanPartitions(bytes, headerLength, START_CODE_4)
             .ifEmpty { scanPartitions(bytes, headerLength, START_CODE_3) }
             .ifEmpty { return null }
 
+        val frames = partitions.map { bytes.copyOfRange(it.start, it.start + it.length) }
         val parameterSets = collectParameterSets(frames) ?: return null
-        return Container.of(width, height, frames, parameterSets)
+        val perPartition = partitions.map { splitAccessUnits(it.slice(bytes)).size }
+        return Container.of(
+            width,
+            height,
+            frames,
+            parameterSets,
+            frameDelays(bytes, partitions, perPartition)
+        )
     }
 
     /**
@@ -159,22 +190,91 @@ object WxgfFormat {
      * 长度对不上（<=0 或越界）的起始码是码流里的假起始码，跳过继续找，
      * 这与 netizens 的 wxgf 解析实现一致；不这样做会把表情数据切碎。
      */
-    private fun scanPartitions(bytes: ByteArray, from: Int, pattern: ByteArray): List<ByteArray> {
-        val frames = ArrayList<ByteArray>()
+    private fun scanPartitions(bytes: ByteArray, from: Int, pattern: ByteArray): List<Segment> {
+        val partitions = ArrayList<Segment>()
         val limit = bytes.size - pattern.size
         var index = from
         while (index <= limit) {
             if (matchesAt(bytes, index, pattern) && index >= 4) {
                 val length = readU32(bytes, index - 4)
                 if (length in 1..(bytes.size - index)) {
-                    frames += bytes.copyOfRange(index, index + length)
+                    partitions += Segment(index, length)
                     index += length
                     continue
                 }
             }
             index++
         }
-        return frames
+        return partitions
+    }
+
+    /**
+     * 逐帧播放时长（毫秒），与访问单元一一对应。
+     *
+     * 时长写在分区之间的私有块里，一个块对应紧随其后那个分区的画面，块头 2 字节就是毫秒数。
+     * 块的长度看文件，实测 100～108 字节；同一间隙里可能有多个块（一个分区装两帧），
+     * 所以先按「除块头 2 字节外完全相同」找出块的个数，再按帧数等比摊开。
+     *
+     * 认不出块结构、或者值越界时一律退回 [DEFAULT_FRAME_DELAY_MS]——
+     * 宁可按默认速度播，也不要被私有块里的别的字段带偏。
+     */
+    private fun frameDelays(
+        bytes: ByteArray,
+        partitions: List<Segment>,
+        perPartition: List<Int>
+    ): IntArray {
+        val delays = IntArray(perPartition.sum()) { DEFAULT_FRAME_DELAY_MS }
+        var index = 0
+        partitions.indices.forEach { p ->
+            val count = perPartition[p]
+            if (count <= 0) return@forEach
+            // 分区 0 前面没有私有块，用默认值
+            val blocks = if (p == 0) emptyList() else blockDelays(bytes, partitions[p - 1], partitions[p])
+            for (j in 0 until count) {
+                if (index >= delays.size) break
+                if (blocks.isNotEmpty()) {
+                    // 块数少于帧数时按比例复用，多于帧数时均匀取样
+                    delays[index] = blocks[(j * blocks.size) / count]
+                }
+                index++
+            }
+        }
+        return delays
+    }
+
+    /** 取出 [previous] 与 [next] 之间那块私有数据里的逐帧时长。 */
+    private fun blockDelays(bytes: ByteArray, previous: Segment, next: Segment): List<Int> {
+        val from = previous.start + previous.length
+        // 下一分区自己还有 4 字节长度字段，不属于私有块
+        val to = next.start - 4
+        if (to - from < MIN_BLOCK_BYTES) return emptyList()
+        val gap = bytes.copyOfRange(from, to)
+
+        for (count in MAX_BLOCKS_PER_GAP downTo 2) {
+            if (gap.size % count != 0) continue
+            val size = gap.size / count
+            if (size < MIN_BLOCK_BYTES) continue
+            // 同一间隙里的块只有块头 2 字节（时长）不同，其余应当完全一致
+            if (!sameBeyondDelay(gap, size, count)) continue
+            return (0 until count).map { delayOf(gap, it * size) }
+        }
+        return listOf(delayOf(gap, 0))
+    }
+
+    private fun sameBeyondDelay(gap: ByteArray, size: Int, count: Int): Boolean {
+        for (k in 1 until count) {
+            for (i in 2 until size) {
+                if (gap[i] != gap[k * size + i]) return false
+            }
+        }
+        return true
+    }
+
+    /** 块头的 2 字节时长；0 或越界都按默认值算。 */
+    private fun delayOf(gap: ByteArray, offset: Int): Int {
+        val value = readU16(gap, offset)
+        if (value == 0) return DEFAULT_FRAME_DELAY_MS
+        return if (value in MIN_FRAME_DELAY_MS..MAX_FRAME_DELAY_MS) value else DEFAULT_FRAME_DELAY_MS
     }
 
     /** 从各区段里找 VPS/SPS/PPS；缺任何一个都返回 null，交给上层判为不可解。 */
@@ -248,6 +348,11 @@ object WxgfFormat {
 
     /** 一个 NAL 单元在源字节里的位置：[from] 是起始码起点，[payload] 是 NAL 头起点。 */
     private class Nal(val from: Int, val payload: Int, val to: Int)
+
+    /** 一个分区在源字节里的位置：从起始码起算 [length] 字节。 */
+    private class Segment(val start: Int, val length: Int) {
+        fun slice(bytes: ByteArray): ByteArray = bytes.copyOfRange(start, start + length)
+    }
 
     /** 按起始码切开码流，保留每个 NAL 的起始码位置，便于原样切片。 */
     private fun nalUnits(bytes: ByteArray): List<Nal> {

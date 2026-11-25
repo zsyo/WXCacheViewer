@@ -106,9 +106,78 @@ class GifEncoderTest {
         assertEquals(GREEN and 0xFFFFFF, decoded.first().getRGB(0, 0) and 0xFFFFFF)
     }
 
+    @Test
+    fun writesEachFrameWithItsOwnDelay() {
+        val frames = (0 until 3).map { index -> IntArray(4) { if (index == 0) RED else GREEN } }
+        val out = ByteArrayOutputStream()
+
+        GifEncoder.encode(2, 2, frames, intArrayOf(40, 100, 70), out)
+
+        // 图形控制扩展固定是 21 F9 04 <标志> <延时 小端 2 字节> 00
+        assertEquals(listOf(4, 10, 7), writtenDelays(out.toByteArray()))
+    }
+
+    @Test
+    fun reusesLastDelayWhenFewerDelaysThanFrames() {
+        val frames = (0 until 3).map { IntArray(4) { RED } }
+        val out = ByteArrayOutputStream()
+
+        GifEncoder.encode(2, 2, frames, intArrayOf(60), out)
+
+        assertEquals(listOf(6, 6, 6), writtenDelays(out.toByteArray()))
+    }
+
+    /** 按 GIF 结构走一遍，取出每个 Graphic Control Extension 里的延时（单位 1/100 秒）。 */
+    private fun writtenDelays(bytes: ByteArray): List<Int> {
+        val delays = ArrayList<Int>()
+        // 文件头 13 字节 + 全局色表
+        var index = 13 + 3 * PALETTE_ENTRIES
+        while (index < bytes.size) {
+            when (bytes[index].toInt() and 0xFF) {
+                0x21 -> {
+                    val label = bytes[index + 1].toInt() and 0xFF
+                    index += 2
+                    if (label == 0xF9) {
+                        val size = bytes[index].toInt() and 0xFF
+                        delays += (bytes[index + 2].toInt() and 0xFF) or
+                            ((bytes[index + 3].toInt() and 0xFF) shl 8)
+                        index += 1 + size
+                    }
+                    index = skipSubBlocks(bytes, index)
+                }
+
+                0x2C -> {
+                    index += 1
+                    val flags = bytes[index + 8].toInt() and 0xFF
+                    index += 9
+                    if (flags and 0x80 != 0) index += 3 * (1 shl ((flags and 0x07) + 1))
+                    index += 1                        // LZW 最小码长
+                    index = skipSubBlocks(bytes, index)
+                }
+
+                0x3B -> return delays
+
+                else -> index++
+            }
+        }
+        return delays
+    }
+
+    /** 跳过数据子块链（每块 1 字节长度 + 数据，遇到长度 0 结束），返回链尾之后的位置。 */
+    private fun skipSubBlocks(bytes: ByteArray, from: Int): Int {
+        var index = from
+        while (index < bytes.size && bytes[index].toInt() != 0) {
+            index += 1 + (bytes[index].toInt() and 0xFF)
+        }
+        return index + 1
+    }
+
     private companion object {
         const val RED = 0xFFFF0000.toInt()
         const val GREEN = 0xFF00FF00.toInt()
         const val BLUE = 0xFF0000FF.toInt()
+
+        /** 编码器固定写 256 色全局色表。 */
+        const val PALETTE_ENTRIES = 256
     }
 }

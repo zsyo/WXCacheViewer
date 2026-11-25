@@ -45,6 +45,9 @@ class WxgfFormatTest {
     /** 分区 = 4 字节大端长度 + 码流本体，长度只算起始码之后的部分。 */
     private fun partition(body: ByteArray): ByteArray = u32(body.size) + body
 
+    /** 分区之间的私有块：块头 2 字节是这一帧的时长，其余字节固定（真实文件里是帧头与填充）。 */
+    private fun block(delayMs: Int): ByteArray = u16(delayMs) + ByteArray(22) { 0x55 }
+
     private fun join(vararg units: ByteArray): ByteArray =
         units.fold(ByteArray(0)) { acc, unit -> acc + unit }
 
@@ -131,6 +134,50 @@ class WxgfFormatTest {
                 byteArrayOf(0, 0, 0, secondBody.size.toByte()) + secondBody,
             sample
         )
+    }
+
+    @Test
+    fun readsPerFrameDelayFromPrivateBlocks() {
+        val (vps, sps, pps) = parameterSets()
+        val first = join(vps, sps, pps, nal(19, ByteArray(16) { 0x44 }))
+        // 第二个分区装两帧，紧跟其后的两个私有块分别写 50ms 与 100ms
+        val second = join(nal(1, ByteArray(8) { 0x55 }), nal(1, ByteArray(8) { 0x66 }))
+        val bytes = header() +
+            partition(first) +
+            block(50) + block(100) +
+            partition(second)
+
+        val container = WxgfFormat.parse(bytes)!!
+
+        assertEquals(3, container.units.size)
+        // 分区 0 前面没有私有块，按默认 50ms；后两帧各用自己的时长
+        assertArrayEquals(intArrayOf(50, 50, 100), container.frameDelaysMs)
+    }
+
+    @Test
+    fun zeroDelayMeansDefaultFiftyMilliseconds() {
+        val (vps, sps, pps) = parameterSets()
+        val first = join(vps, sps, pps, nal(19, ByteArray(16) { 0x44 }))
+        val second = nal(1, ByteArray(8) { 0x55 })
+        val bytes = header() + partition(first) + block(0) + partition(second)
+
+        val container = WxgfFormat.parse(bytes)!!
+
+        assertEquals(WxgfFormat.DEFAULT_FRAME_DELAY_MS, 50)
+        assertArrayEquals(intArrayOf(50, 50), container.frameDelaysMs)
+    }
+
+    @Test
+    fun fallsBackToDefaultWhenBlockIsNotRecognised() {
+        val (vps, sps, pps) = parameterSets()
+        val first = join(vps, sps, pps, nal(19, ByteArray(16) { 0x44 }))
+        val second = nal(1, ByteArray(8) { 0x55 })
+        // 私有块长度不足以构成一帧的元数据：不该硬猜，按默认速度走
+        val bytes = header() + partition(first) + ByteArray(6) + partition(second)
+
+        val container = WxgfFormat.parse(bytes)!!
+
+        assertArrayEquals(intArrayOf(50, 50), container.frameDelaysMs)
     }
 
     @Test

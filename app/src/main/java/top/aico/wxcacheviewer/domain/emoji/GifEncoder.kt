@@ -30,8 +30,11 @@ object GifEncoder {
     /** LZW 最小码长：256 色调色板对应 8 位，基表 256 项 + clear + EOI。 */
     private const val COLOR_BITS = 8
 
+    /** 没给某帧的延时时沿用上一个值；一帧都没给时按 5 厘秒（50ms）。 */
+    private const val DEFAULT_DELAY_CS = 5
+
     /**
-     * 编码成 GIF。[frames] 每帧长度必须等于 `width * height`，元素是 ARGB。
+     * 编码成 GIF（所有帧同一个间隔）。[frames] 每帧长度必须等于 `width * height`，元素是 ARGB。
      *
      * [frameDelayMs] 不足 10ms 时按 1 厘秒处理——GIF 的时间单位是 1/100 秒。
      */
@@ -40,6 +43,21 @@ object GifEncoder {
         height: Int,
         frames: List<IntArray>,
         frameDelayMs: Int,
+        out: OutputStream
+    ) = encode(width, height, frames, IntArray(frames.size) { frameDelayMs }, out)
+
+    /**
+     * 编码成 GIF，每帧各用自己的间隔。
+     *
+     * 微信表情的真实节奏是逐帧写在容器里的（同一张表情里也可能一会儿 40ms、一会儿 100ms），
+     * 所以这里按帧写 Graphic Control Extension，而不是整段一个延时。
+     * [frameDelaysMs] 比帧数短时，缺的帧沿用最后一帧的值。
+     */
+    fun encode(
+        width: Int,
+        height: Int,
+        frames: List<IntArray>,
+        frameDelaysMs: IntArray,
         out: OutputStream
     ) {
         require(width > 0 && height > 0 && frames.isNotEmpty()) { "空的动图" }
@@ -62,8 +80,11 @@ object GifEncoder {
         }
         writeLoopExtension(out)
 
-        val delay = (frameDelayMs / 10).coerceAtLeast(1)
-        frames.forEach { frame ->
+        var delay = DEFAULT_DELAY_CS
+        frames.forEachIndexed { index, frame ->
+            if (index < frameDelaysMs.size) {
+                delay = (frameDelaysMs[index] / 10).coerceAtLeast(1)
+            }
             writeGraphicControl(out, delay)
             writeImageDescriptor(out, width, height)
             val compressed = ByteArrayOutputStream(frame.size / 2 + 64)

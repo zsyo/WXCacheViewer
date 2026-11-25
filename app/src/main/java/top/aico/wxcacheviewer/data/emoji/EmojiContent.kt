@@ -23,14 +23,13 @@ import java.io.File
  */
 object EmojiContent {
 
-    /** wxgf 导出动图的帧间隔。容器头里没有可信的帧率字段，实测 30fps 明显偏快，按 10fps 走。 */
-    private const val FRAME_DELAY_MS = 100
-
     /**
      * 编码参数或产物格式变了就改这个串：缓存文件名里带着它，旧产物自然失效，
      * 不用等用户清缓存，也不会把按旧参数编好的动图当成新的。
+     *
+     * v2：帧间隔改成按容器里的逐帧时长走（原来固定 10fps）。
      */
-    const val CACHE_TAG = "gif-100ms"
+    const val CACHE_TAG = "gif-v2"
 
     /**
      * [extension] 为 null 表示内容与源类型一致；非 null 表示已经转换过，
@@ -78,10 +77,18 @@ object EmojiContent {
             return false
         }
         val first = frames.first()
-        target.outputStream().use { out ->
-            GifEncoder.encode(first.width, first.height, frames.map { it.argb }, FRAME_DELAY_MS, out)
+        // 容器里带的是逐帧时长；解码出来的帧数偶尔比它少（坏帧被丢），数组按实际帧数截断/补齐
+        val delays = IntArray(frames.size) { index ->
+            container.frameDelaysMs.getOrElse(index) { WxgfFormat.DEFAULT_FRAME_DELAY_MS }
         }
-        AppLog.log("emoji", "wxgf gif frames=${frames.size} bytes=${target.length()}")
+        target.outputStream().use { out ->
+            GifEncoder.encode(first.width, first.height, frames.map { it.argb }, delays, out)
+        }
+        AppLog.log(
+            "emoji",
+            "wxgf gif frames=${frames.size} bytes=${target.length()} " +
+                "delay=${delays.minOrNull()}~${delays.maxOrNull()}ms"
+        )
         return target.length() > 0
     }
 
